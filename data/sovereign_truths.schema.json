@@ -1,0 +1,80 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "sovereign_truths.schema.json",
+  "title": "Willow Sovereign Truths",
+  "description": "Schema for data/sovereign_truths.json — curated facts enforced as hard overrides in Tier 4 Sovereign (FR-007, FR-008).",
+  "type": "object",
+  "required": ["sovereign_truths"],
+  "properties": {
+    "meta": {
+      "type": "object",
+      "properties": {
+        "note": { "type": "string" },
+        "total_entries": { "type": "integer", "minimum": 1 },
+        "version": { "type": "string" },
+        "created": { "type": "string" }
+      }
+    },
+    "sovereign_truths": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": ["key", "assertion", "contradiction_keywords", "response_template", "priority"],
+        "properties": {
+          "key": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Unique slug identifier for this truth"
+          },
+          "assertion": {
+            "type": "string",
+            "minLength": 1,
+            "description": "The factual claim Willow will defend verbatim"
+          },
+          "contradiction_keywords": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "string",
+              "minLength": 1
+            },
+            "description": "Keyword phrases that trigger deterministic contradiction detection (FR-008a)"
+          },
+          "response_template": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Pre-written Warm but Sharp response. Use '[VACUUM_MODE]' sentinel when vacuum_mode is true."
+          },
+          "priority": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 10,
+            "description": "1=highest priority (core identity), 10=lowest (operational detail)"
+          },
+          "vacuum_mode": {
+            "type": "boolean",
+            "default": false,
+            "description": "When true: suppress speech, play acoustic heartbeat, serve response_on_return on next utility signal"
+          },
+          "response_on_return": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Response delivered when user returns after vacuum mode. Required when vacuum_mode is true."
+          },
+          "created_at": {
+            "type": "string",
+            "description": "ISO 8601 date or datetime string"
+          }
+        },
+        "if": {
+          "properties": { "vacuum_mode": { "const": true } }
+        },
+        "then": {
+          "required": ["response_on_return"]
+        },
+        "unevaluatedProperties": false
+      }
+    }
+  }
+}

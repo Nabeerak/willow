@@ -1,0 +1,138 @@
+title: NoiseGate Audio Processing Interface
+version: "1.0"
+feature: 002-gemini-audio-opt
+date: 2026-03-02
+
+description: |
+  Defines the interface and configuration contract for the client-side noise gate
+  AudioWorklet module. The noise gate sits between the microphone input and the
+  Gemini Live audio stream sender.
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Files
+# ─────────────────────────────────────────────────────────────────────────────
+
+files:
+  processor:
+    path: src/voice/static/noise-gate-processor.js
+    type: AudioWorkletProcessor module
+    registration_name: "noise-gate-processor"
+    description: |
+      AudioWorkletProcessor subclass. Loaded into the audio rendering thread via
+      audioContext.audioWorklet.addModule(). Processes audio in 128-sample blocks.
+
+  main_thread_setup:
+    path: src/voice/static/audio_capture.js
+    type: JavaScript ES module
+    exported_function: initNoiseGate()
+    description: |
+      Main-thread setup: getUserMedia → AudioContext → AudioWorklet → gated MediaStream.
+      Returns { audioContext, noiseGateNode, gatedStream, stop }.
+
+# ─────────────────────────────────────────────────────────────────────────────
+# NoiseGateProcessor Configuration
+# ─────────────────────────────────────────────────────────────────────────────
+
+processor_config:
+  threshold_dbfs: -50.0
+  threshold_linear: 0.003162       # 10^(-50/20) — authoritative float32 value
+  hold_duration_ms: 200
+  hold_samples_at_48khz: 9600      # Math.round(0.200 * 48000)
+  hold_samples_at_44khz: 8820      # Math.round(0.200 * 44100)
+  hold_samples_at_16khz: 3200      # Math.round(0.200 * 16000)
+  block_size: 128                   # Fixed by Web Audio API spec
+  rms_formula: "sqrt( sum(x[i]^2) / N ) for i in [0, N)"
+  output_when_closed: zeros         # Browser pre-zeroes output buffers; no write needed
+
+# ─────────────────────────────────────────────────────────────────────────────
+# getUserMedia Constraints
+# ─────────────────────────────────────────────────────────────────────────────
+
+getusermedia_constraints:
+  audio:
+    echoCancellation: true           # Browser AEC: removes agent audio from mic input
+    noiseSuppression: false          # Disabled: our gate handles suppression
+    autoGainControl: false           # Disabled: AGC can boost silence above threshold
+  video: false
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Audio Graph
+# ─────────────────────────────────────────────────────────────────────────────
+
+audio_graph:
+  nodes:
+    - id: mic_source
+      type: MediaStreamAudioSourceNode
+      input: getUserMedia stream
+    - id: noise_gate
+      type: AudioWorkletNode
+      processor: noise-gate-processor
+    - id: capture_dest
+      type: MediaStreamAudioDestinationNode
+      output: gatedStream (MediaStream)
+  connections:
+    - from: mic_source
+      to: noise_gate
+    - from: noise_gate
+      to: capture_dest
+
+# ─────────────────────────────────────────────────────────────────────────────
+# initNoiseGate() Return Contract
+# ─────────────────────────────────────────────────────────────────────────────
+
+init_return_contract:
+  audioContext:
+    type: AudioContext
+    description: The audio context driving the processing graph
+  noiseGateNode:
+    type: AudioWorkletNode
+    description: Reference to the noise gate node for monitoring/teardown
+  gatedStream:
+    type: MediaStream
+    description: Live MediaStream containing only audio above -50 dBFS threshold
+  stop:
+    type: "() => void"
+    description: Releases mic tracks and closes AudioContext
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Error Conditions
+# ─────────────────────────────────────────────────────────────────────────────
+
+errors:
+  - condition: getUserMedia denied by user
+    exception: DOMException (NotAllowedError)
+    handling: Surface error to UI; do not start voice session
+
+  - condition: AudioWorklet not supported (rare; IE/old browsers)
+    detection: "typeof AudioWorkletNode === 'undefined'"
+    handling: Log warning; session cannot proceed — AudioWorklet is required
+
+  - condition: addModule() fetch fails (CORS, 404, non-HTTPS)
+    exception: DOMException
+    handling: Log error with path; check static file serving and HTTPS requirement
+
+  - condition: AudioContext blocked by autoplay policy
+    detection: audioContext.state === 'suspended'
+    handling: Call audioContext.resume() in user gesture handler before init
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Threading and Lifecycle
+# ─────────────────────────────────────────────────────────────────────────────
+
+threading:
+  processor_thread: Audio rendering thread (separate from main JS thread)
+  tab_backgrounding_behavior: |
+    AudioWorkletProcessor continues executing on the audio rendering thread
+    regardless of tab visibility. ScriptProcessorNode (deprecated) does NOT
+    guarantee this — that is the primary reason for using AudioWorklet.
+
+lifecycle:
+  setup: |
+    1. getUserMedia with echoCancellation constraints
+    2. new AudioContext()
+    3. await audioContext.audioWorklet.addModule('noise-gate-processor.js')
+    4. new AudioWorkletNode(audioContext, 'noise-gate-processor')
+    5. Connect graph: mic → gate → dest
+  teardown: |
+    1. call stop() — releases mic tracks, closes AudioContext
+    2. AudioWorklet processing stops when AudioContext closes

@@ -1,0 +1,63 @@
+# Cloud Build configuration for Willow Behavioral Framework
+# T063: Includes SHA-256 hash computation for sovereign_truths.json (FR-008j)
+
+steps:
+  # Step 1: Compute SHA-256 of sovereign_truths.json and write to Secret Manager
+  - name: 'gcr.io/cloud-builders/gcloud'
+    entrypoint: 'bash'
+    args:
+      - '-c'
+      - |
+        HASH=$(sha256sum data/sovereign_truths.json | awk '{print $1}')
+        echo "Sovereign truths hash: $${HASH}"
+        # Create or update the secret
+        if gcloud secrets describe sovereign-truths-hash --project=$PROJECT_ID 2>/dev/null; then
+          echo "$${HASH}" | gcloud secrets versions add sovereign-truths-hash \
+            --data-file=- --project=$PROJECT_ID
+        else
+          echo "$${HASH}" | gcloud secrets create sovereign-truths-hash \
+            --data-file=- --replication-policy=automatic --project=$PROJECT_ID
+        fi
+
+  # Step 2: Build the Docker image
+  - name: 'gcr.io/cloud-builders/docker'
+    args:
+      - 'build'
+      - '-t'
+      - 'gcr.io/$PROJECT_ID/willow:$COMMIT_SHA'
+      - '-t'
+      - 'gcr.io/$PROJECT_ID/willow:latest'
+      - '.'
+
+  # Step 3: Push the Docker image
+  - name: 'gcr.io/cloud-builders/docker'
+    args:
+      - 'push'
+      - 'gcr.io/$PROJECT_ID/willow:$COMMIT_SHA'
+
+  - name: 'gcr.io/cloud-builders/docker'
+    args:
+      - 'push'
+      - 'gcr.io/$PROJECT_ID/willow:latest'
+
+  # Step 4: Deploy to Cloud Run
+  - name: 'gcr.io/cloud-builders/gcloud'
+    args:
+      - 'run'
+      - 'deploy'
+      - 'willow'
+      - '--image=gcr.io/$PROJECT_ID/willow:$COMMIT_SHA'
+      - '--region=us-central1'
+      - '--platform=managed'
+      - '--min-instances=1'
+      - '--cpu=2'
+      - '--memory=4Gi'
+      - '--timeout=60s'
+      - '--set-env-vars=GCP_PROJECT_ID=$PROJECT_ID'
+      - '--allow-unauthenticated'
+
+images:
+  - 'gcr.io/$PROJECT_ID/willow:$COMMIT_SHA'
+  - 'gcr.io/$PROJECT_ID/willow:latest'
+
+timeout: '1200s'

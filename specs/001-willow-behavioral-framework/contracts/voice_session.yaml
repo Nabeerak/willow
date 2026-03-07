@@ -1,0 +1,189 @@
+openapi: 3.0.0
+info:
+  title: Willow Voice Session API
+  description: Real-time voice conversation interface for Willow Behavioral Framework
+  version: 1.0.0
+
+servers:
+  - url: wss://willow.run.app/api/v1
+    description: Google Cloud Run WebSocket endpoint
+
+paths:
+  /session/start:
+    post:
+      summary: Start new voice session
+      description: Initialize session state and return session_id for WebSocket connection
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                user_id:
+                  type: string
+                  description: Optional user identifier (for future multi-session support)
+                language:
+                  type: string
+                  default: en-US
+                  description: Voice language code
+      responses:
+        '201':
+          description: Session created successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  session_id:
+                    type: string
+                    format: uuid
+                  websocket_url:
+                    type: string
+                    example: wss://willow.run.app/api/v1/session/{session_id}/stream
+                  expires_at:
+                    type: string
+                    format: date-time
+        '400':
+          description: Invalid request parameters
+
+  /session/{session_id}/stream:
+    get:
+      summary: WebSocket voice stream
+      description: Bidirectional audio streaming with interruption support
+      parameters:
+        - name: session_id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '101':
+          description: Switching to WebSocket protocol
+        '404':
+          description: Session not found
+        '410':
+          description: Session expired
+
+components:
+  schemas:
+    VoiceStreamMessage:
+      oneOf:
+        - $ref: '#/components/schemas/AudioChunk'
+        - $ref: '#/components/schemas/Interruption'
+        - $ref: '#/components/schemas/TurnComplete'
+        - $ref: '#/components/schemas/ThoughtSignatureLog'
+
+    AudioChunk:
+      type: object
+      required:
+        - type
+        - audio_data
+      properties:
+        type:
+          type: string
+          enum: [audio_chunk]
+        audio_data:
+          type: string
+          format: byte
+          description: Base64-encoded audio (16kHz, 16-bit PCM, mono)
+        chunk_index:
+          type: integer
+          description: Sequential chunk number for ordering
+        is_final:
+          type: boolean
+          description: True if this is the last chunk of a turn
+
+    Interruption:
+      type: object
+      required:
+        - type
+      properties:
+        type:
+          type: string
+          enum: [interruption]
+        interrupted_at_chunk:
+          type: integer
+          description: Which agent response chunk was interrupted
+        reason:
+          type: string
+          enum: [user_speech_detected, silence_timeout]
+
+    TurnComplete:
+      type: object
+      required:
+        - type
+        - turn_id
+      properties:
+        type:
+          type: string
+          enum: [turn_complete]
+        turn_id:
+          type: integer
+        user_input:
+          type: string
+          description: Transcribed user speech
+        agent_response:
+          type: string
+          description: Surface text (excludes [THOUGHT] tags)
+        m_modifier:
+          type: number
+          format: float
+          description: Feedback modifier applied this turn
+        tier_latencies:
+          type: object
+          properties:
+            tier1_ms:
+              type: number
+            tier2_ms:
+              type: number
+            tier3_ms:
+              type: number
+            tier4_ms:
+              type: number
+
+    ThoughtSignatureLog:
+      type: object
+      required:
+        - type
+        - turn_id
+        - signature
+      properties:
+        type:
+          type: string
+          enum: [thought_signature]
+        turn_id:
+          type: integer
+        signature:
+          type: object
+          properties:
+            intent:
+              type: string
+              enum: [collaborative, neutral, hostile, devaluing, insightful]
+            tone:
+              type: string
+              enum: [warm, casual, formal, sarcastic, aggressive]
+            detected_tactic:
+              type: string
+              nullable: true
+              enum: [soothing, mirroring, gaslighting, deflection, contextual_sarcasm, null]
+            m_modifier:
+              type: number
+              format: float
+            tier_trigger:
+              type: integer
+              nullable: true
+              enum: [3, 4, null]
+            rationale:
+              type: string
+
+  securitySchemes:
+    ApiKeyAuth:
+      type: apiKey
+      in: header
+      name: X-API-Key
+      description: Gemini Live API key
+
+security:
+  - ApiKeyAuth: []

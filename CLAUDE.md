@@ -208,3 +208,10 @@ Wait for consent; never auto-create ADRs. Group related decisions (stacks, authe
 
 ## Code Standards
 See `.specify/memory/constitution.md` for code quality, testing, performance, security, and architecture principles.
+
+## Active Technologies
+- Python 3.12 (backend) · JavaScript ES2022 (AudioWorklet, no transpile) + `google-genai >= 0.3.0` (installed), Web Audio API (browser-native) (002-gemini-audio-opt)
+- N/A — all state is transient per-session (002-gemini-audio-opt)
+
+## Recent Changes
+- 002-gemini-audio-opt: Added Python 3.12 (backend) · JavaScript ES2022 (AudioWorklet, no transpile) + `google-genai >= 0.3.0` (installed), Web Audio API (browser-native)

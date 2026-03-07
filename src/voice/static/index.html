@@ -1,0 +1,318 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Willow — Dev UI</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: 'SF Mono', 'Fira Code', monospace;
+    background: #0f1117; color: #e1e4ed;
+    min-height: 100vh; display: flex; flex-direction: column;
+  }
+  header {
+    padding: 14px 20px; border-bottom: 1px solid #2a2d3a;
+    display: flex; align-items: center; justify-content: space-between;
+  }
+  .header-brand { display: flex; align-items: center; gap: 10px; }
+  .header-brand img { height: 36px; width: 36px; border-radius: 50%; object-fit: cover; }
+  header h1 { font-size: 16px; font-weight: 600; letter-spacing: 1px; }
+  .pill {
+    padding: 3px 10px; border-radius: 999px; font-size: 11px;
+    background: #1a1d27; border: 1px solid #2a2d3a; color: #8b8fa3;
+  }
+  .pill.ok { border-color: #4ade80; color: #4ade80; }
+  .pill.live { border-color: #6c63ff; color: #6c63ff; animation: blink 1.2s infinite; }
+  .pill.err { border-color: #f87171; color: #f87171; }
+  @keyframes blink { 0%,100%{opacity:1} 50%{opacity:.4} }
+
+  main { flex: 1; max-width: 720px; width: 100%; margin: 0 auto; padding: 20px; display: flex; flex-direction: column; gap: 14px; }
+
+  .stats {
+    display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px;
+  }
+  .stat {
+    background: #1a1d27; border: 1px solid #2a2d3a; border-radius: 6px;
+    padding: 10px 14px;
+  }
+  .stat label { display: block; font-size: 10px; color: #8b8fa3; text-transform: uppercase; letter-spacing: .8px; margin-bottom: 4px; }
+  .stat .val { font-size: 18px; font-weight: 700; }
+  .pos { color: #4ade80; } .neg { color: #f87171; } .neu { color: #e1e4ed; }
+
+  .log {
+    background: #1a1d27; border: 1px solid #2a2d3a; border-radius: 6px;
+    padding: 14px; height: 340px; overflow-y: auto; display: flex; flex-direction: column; gap: 8px;
+  }
+  .msg { padding: 7px 10px; border-radius: 5px; font-size: 13px; line-height: 1.5; }
+  .msg.user { background: rgba(108,99,255,.12); border-left: 3px solid #6c63ff; }
+  .msg.agent { background: rgba(74,222,128,.07); border-left: 3px solid #4ade80; }
+  .msg.sys { color: #8b8fa3; font-size: 11px; font-style: italic; }
+  .msg .meta { font-size: 10px; color: #8b8fa3; margin-top: 3px; }
+
+  .mode-row { display: flex; gap: 8px; }
+  .tab {
+    padding: 5px 14px; background: #1a1d27; border: 1px solid #2a2d3a;
+    border-radius: 5px; color: #8b8fa3; cursor: pointer; font-family: inherit; font-size: 12px;
+  }
+  .tab.on { border-color: #6c63ff; color: #6c63ff; }
+
+  .input-row { display: flex; gap: 8px; }
+  .input-row input {
+    flex: 1; padding: 10px 14px; background: #1a1d27; border: 1px solid #2a2d3a;
+    border-radius: 6px; color: #e1e4ed; font-family: inherit; font-size: 13px; outline: none;
+  }
+  .input-row input:focus { border-color: #6c63ff; }
+  .btn {
+    padding: 10px 18px; background: #6c63ff; border: none; border-radius: 6px;
+    color: white; cursor: pointer; font-family: inherit; font-weight: 600; font-size: 13px;
+  }
+  .btn:disabled { opacity: .35; cursor: not-allowed; }
+  .btn.red { background: #f87171; }
+  .btn.outline { background: transparent; border: 1px solid #6c63ff; color: #6c63ff; }
+
+  .mic-row { display: flex; align-items: center; gap: 12px; }
+  .mic-btn {
+    width: 52px; height: 52px; border-radius: 50%;
+    border: 2px solid #6c63ff; background: transparent; color: #6c63ff;
+    cursor: pointer; display: flex; align-items: center; justify-content: center;
+    transition: all .18s;
+  }
+  .mic-btn:hover { background: rgba(108,99,255,.15); }
+  .mic-btn.on { background: #6c63ff; color: white; box-shadow: 0 0 18px rgba(108,99,255,.4); }
+  .mic-btn:disabled { opacity: .3; cursor: not-allowed; }
+  .mic-hint { font-size: 12px; color: #8b8fa3; }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="header-brand">
+    <img src="/static/logo.png" alt="Willow Agent logo">
+    <h1>WILLOW dev</h1>
+  </div>
+  <span class="pill" id="connPill">Connecting…</span>
+</header>
+
+<main>
+  <!-- State bar -->
+  <div class="stats">
+    <div class="stat"><label>m value</label><div class="val neu" id="mVal">0.00</div></div>
+    <div class="stat"><label>Turn</label><div class="val" id="turnVal">0</div></div>
+    <div class="stat"><label>Cold Start</label><div class="val" id="coldVal">—</div></div>
+    <div class="stat"><label>Troll Defense</label><div class="val" id="trollVal">—</div></div>
+  </div>
+
+  <!-- Chat log -->
+  <div class="log" id="log">
+    <div class="msg sys">Initialising session…</div>
+  </div>
+
+  <!-- Mode tabs -->
+  <div class="mode-row">
+    <button class="tab on" id="tabText" onclick="setMode('text')">Text</button>
+    <button class="tab" id="tabVoice" onclick="setMode('voice')">Voice</button>
+  </div>
+
+  <!-- Text controls -->
+  <div id="textArea" class="input-row">
+    <input id="textIn" placeholder="Type a message…" onkeydown="if(event.key==='Enter')send()">
+    <button class="btn" id="sendBtn" onclick="send()" disabled>Send</button>
+  </div>
+
+  <!-- Voice controls -->
+  <div id="voiceArea" class="mic-row" style="display:none;">
+    <button class="mic-btn" id="micBtn" onclick="toggleMic()" disabled>
+      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/>
+        <path d="M19 10v2a7 7 0 0 1-14 0v-2"/>
+        <line x1="12" y1="19" x2="12" y2="23"/>
+        <line x1="8" y1="23" x2="16" y2="23"/>
+      </svg>
+    </button>
+    <span class="mic-hint" id="micHint">Click mic to speak — release to send</span>
+  </div>
+</main>
+
+<script>
+// ── State ────────────────────────────────────────────────────────────────────
+let sessionId = null, ws = null, mode = 'text';
+let micActive = false, audioCtx = null, mediaStream = null, processor = null;
+let playCtx = null;
+const audioQueue = [], playLog = document.getElementById('log');
+
+// ── Boot ─────────────────────────────────────────────────────────────────────
+(async function init() {
+  try {
+    const res = await fetch('/api/v1/session', { method: 'POST' });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = await res.json();
+    sessionId = data.session_id;
+
+    setPill('ok', `session ${sessionId.slice(0,8)}`);
+    log('sys', `Session ready: ${sessionId.slice(0,8)}…`);
+    document.getElementById('sendBtn').disabled = false;
+    document.getElementById('micBtn').disabled = false;
+
+    openWS();
+  } catch (e) {
+    setPill('err', 'Error');
+    log('sys', `Init failed: ${e.message}`);
+  }
+})();
+
+function openWS() {
+  const proto = location.protocol === 'https:' ? 'wss' : 'ws';
+  ws = new WebSocket(`${proto}://${location.host}/api/v1/session/${sessionId}/stream`);
+  ws.binaryType = 'arraybuffer';
+
+  ws.onopen  = () => log('sys', 'WebSocket open.');
+  ws.onclose = () => { setPill('err', 'Closed'); log('sys', 'WebSocket closed.'); };
+  ws.onerror = () => setPill('err', 'WS error');
+
+  ws.onmessage = (e) => {
+    if (typeof e.data === 'string') {
+      const m = JSON.parse(e.data);
+      if (m.type === 'text_response') {
+        log('agent', m.text, `m=${m.m.toFixed(2)} · turn ${m.turn}`);
+        refreshState();
+      } else if (m.type === 'turn_complete') {
+        log('agent', m.text || '(audio response)', `turn ${m.turn_id}`);
+        refreshState();
+      } else if (m.type === 'interrupted') {
+        log('sys', 'Agent interrupted.');
+      }
+    } else {
+      playPCM(new Uint8Array(e.data));
+    }
+  };
+}
+
+// ── Text mode ────────────────────────────────────────────────────────────────
+function send() {
+  const el = document.getElementById('textIn');
+  const txt = el.value.trim();
+  if (!txt || !ws || ws.readyState !== 1) return;
+  log('user', txt);
+  ws.send(JSON.stringify({ type: 'text_input', text: txt }));
+  el.value = '';
+}
+
+// ── Voice mode ───────────────────────────────────────────────────────────────
+async function toggleMic() {
+  micActive ? stopMic() : await startMic();
+}
+
+async function startMic() {
+  try {
+    mediaStream = await navigator.mediaDevices.getUserMedia({
+      audio: { sampleRate: 16000, channelCount: 1, echoCancellation: true, noiseSuppression: true }
+    });
+    audioCtx = new AudioContext({ sampleRate: 16000 });
+    if (audioCtx.state === 'suspended') await audioCtx.resume();
+
+    const src = audioCtx.createMediaStreamSource(mediaStream);
+    processor = audioCtx.createScriptProcessor(4096, 1, 1);
+    processor.onaudioprocess = (ev) => {
+      if (!ws || ws.readyState !== 1) return;
+      const f32 = ev.inputBuffer.getChannelData(0);
+      const i16 = new Int16Array(f32.length);
+      for (let i = 0; i < f32.length; i++) {
+        const s = Math.max(-1, Math.min(1, f32[i]));
+        i16[i] = s < 0 ? s * 0x8000 : s * 0x7FFF;
+      }
+      ws.send(i16.buffer);
+    };
+    src.connect(processor);
+    processor.connect(audioCtx.destination);
+
+    micActive = true;
+    document.getElementById('micBtn').classList.add('on');
+    document.getElementById('micHint').textContent = 'Speaking… click to stop and send';
+    setPill('live', 'Streaming');
+    log('sys', 'Mic on — speak now.');
+  } catch (e) {
+    log('sys', `Mic error: ${e.message}`);
+  }
+}
+
+function stopMic() {
+  if (processor) { processor.disconnect(); processor = null; }
+  if (mediaStream) { mediaStream.getTracks().forEach(t => t.stop()); mediaStream = null; }
+  if (audioCtx) { audioCtx.close(); audioCtx = null; }
+  if (ws && ws.readyState === 1) ws.send(JSON.stringify({ type: 'end_turn' }));
+  micActive = false;
+  document.getElementById('micBtn').classList.remove('on');
+  document.getElementById('micHint').textContent = 'Click mic to speak — release to stop';
+  setPill('ok', `session ${sessionId.slice(0,8)}`);
+  log('sys', 'Mic off — end of turn sent.');
+}
+
+// ── Audio playback (24 kHz 16-bit PCM from Gemini) ──────────────────────────
+let playing = false;
+function playPCM(bytes) {
+  audioQueue.push(bytes);
+  if (!playing) drain();
+}
+async function drain() {
+  if (!audioQueue.length) { playing = false; return; }
+  playing = true;
+  if (!playCtx) playCtx = new AudioContext({ sampleRate: 24000 });
+  const bytes = audioQueue.shift();
+  const i16 = new Int16Array(bytes.buffer, bytes.byteOffset, bytes.byteLength >> 1);
+  const f32 = new Float32Array(i16.length);
+  for (let i = 0; i < i16.length; i++) f32[i] = i16[i] / 32768;
+  const buf = playCtx.createBuffer(1, f32.length, 24000);
+  buf.getChannelData(0).set(f32);
+  const src = playCtx.createBufferSource();
+  src.buffer = buf;
+  src.connect(playCtx.destination);
+  src.onended = drain;
+  src.start();
+}
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
+function setMode(m) {
+  mode = m;
+  document.getElementById('tabText').classList.toggle('on', m === 'text');
+  document.getElementById('tabVoice').classList.toggle('on', m === 'voice');
+  document.getElementById('textArea').style.display  = m === 'text'  ? 'flex' : 'none';
+  document.getElementById('voiceArea').style.display = m === 'voice' ? 'flex' : 'none';
+}
+
+function setPill(state, label) {
+  const el = document.getElementById('connPill');
+  el.className = 'pill ' + (state === 'ok' ? 'ok' : state === 'live' ? 'live' : 'err');
+  el.textContent = label;
+}
+
+function log(role, text, meta) {
+  const div = document.createElement('div');
+  div.className = 'msg ' + role;
+  div.textContent = text;
+  if (meta) {
+    const m = document.createElement('div');
+    m.className = 'meta'; m.textContent = meta;
+    div.appendChild(m);
+  }
+  document.getElementById('log').appendChild(div);
+  document.getElementById('log').scrollTop = 9999;
+}
+
+async function refreshState() {
+  if (!sessionId) return;
+  try {
+    const s = await (await fetch(`/api/v1/session/${sessionId}/state`)).json();
+    const mEl = document.getElementById('mVal');
+    mEl.textContent = s.current_m.toFixed(2);
+    mEl.className = 'val ' + (s.current_m > 0 ? 'pos' : s.current_m < 0 ? 'neg' : 'neu');
+    document.getElementById('turnVal').textContent = s.turn_count;
+    document.getElementById('coldVal').textContent = s.cold_start_active ? 'Active' : 'Off';
+    const t = document.getElementById('trollVal');
+    t.textContent = s.troll_defense_active ? 'ACTIVE' : 'Off';
+    t.className = 'val ' + (s.troll_defense_active ? 'neg' : '');
+  } catch (_) {}
+}
+</script>
+</body>
+</html>

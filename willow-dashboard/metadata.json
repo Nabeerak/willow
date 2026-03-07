@@ -1,0 +1,5 @@
+{
+  "name": "Willow Dashboard",
+  "description": "High-fidelity AI voice agent dashboard with glassmorphism UI",
+  "requestFramePermissions": ["microphone"]
+}
