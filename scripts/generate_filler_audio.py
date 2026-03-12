@@ -171,14 +171,20 @@ def try_pyttsx3_generation(text: str, filepath: Path, duration_ms: int) -> bool:
         engine.save_to_file(text, str(filepath))
         engine.runAndWait()
 
-        # Verify the file was created
+        # Verify the file was created and is not empty
         if filepath.exists():
-            print(f"  Generated with pyttsx3")
-            return True
+            if filepath.stat().st_size > 0 and verify_wav_specs(filepath):
+                print(f"  Generated with pyttsx3")
+                return True
+            else:
+                # Remove invalid/empty file
+                filepath.unlink()
         return False
     except ImportError:
         return False
     except Exception as e:
+        if filepath.exists():
+            filepath.unlink()
         print(f"  pyttsx3 failed: {e}")
         return False
 

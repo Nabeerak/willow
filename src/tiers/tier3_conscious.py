@@ -20,9 +20,12 @@ always separated. Tone is reflexive; intent is the strategic layer.
 
 from __future__ import annotations
 
+import json
 import logging
 import time
 from dataclasses import dataclass, field
+from functools import lru_cache
+from pathlib import Path
 from typing import Any, Final, Optional
 
 from ..signatures.tactic_detector import TacticDetector, TacticDetectionResult
@@ -42,39 +45,54 @@ TIER3_LATENCY_BUDGET_MS: Final[float] = 500.0
 # Threshold for filler audio queueing (T048 / US5)
 FILLER_LATENCY_THRESHOLD_MS: Final[float] = 200.0
 
-# Intent-to-m_modifier mapping (T029 values, capped at ±2.0 for ThoughtSignature)
-_INTENT_MODIFIERS: Final[dict[str, float]] = {
-    "collaborative": 1.5,
-    "insightful": 1.5,
-    "neutral": 0.0,
-    "hostile": -0.5,
-    "devaluing": -2.0,  # Stored capped; actual spike via calculate_sovereign_spike()
-}
+@lru_cache(maxsize=1)
+def _load_m_modifiers() -> dict[str, float]:
+    """Load m_modifiers from willow_keywords.json."""
+    keywords_path = Path(__file__).parent.parent.parent / "data" / "willow_keywords.json"
+    fallback: dict[str, float] = {
+        "collaborative": 1.5,
+        "insightful": 1.5,
+        "neutral": 0.0,
+        "hostile": -0.5,
+        "devaluing": -2.0,
+        "sincere_pivot": 2.0,
+    }
+    try:
+        with open(keywords_path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+            loaded = {
+                k: float(v)
+                for k, v in data.get("m_modifiers", {}).items()
+                if k != "note" and isinstance(v, (int, float))
+            }
+            return loaded if loaded else fallback
+    except (FileNotFoundError, json.JSONDecodeError) as e:
+        logger.warning("Failed to load m_modifiers from willow_keywords.json: %s", e)
+        return fallback
 
-# Keyword sets for lightweight intent classification
-_COLLABORATIVE_SIGNALS: Final[frozenset[str]] = frozenset({
-    "thank", "thanks", "appreciate", "great", "excellent", "love",
-    "let's", "together", "help me", "i agree", "makes sense",
-    "good point", "fair", "i see", "understood", "got it",
-})
+@lru_cache(maxsize=1)
+def _load_intent_keywords() -> dict[str, list[str]]:
+    """Load intent keywords from willow_keywords.json."""
+    keywords_path = Path(__file__).parent.parent.parent / "data" / "willow_keywords.json"
+    try:
+        with open(keywords_path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+            return data.get("intents", {})
+    except (FileNotFoundError, json.JSONDecodeError) as e:
+        logger.warning(f"Failed to load willow_keywords.json in Tier 3: {e}")
+        return {}
 
-_HOSTILE_SIGNALS: Final[frozenset[str]] = frozenset({
-    "hate", "terrible", "awful", "stupid", "shut up", "useless",
-    "pathetic", "idiot", "dumb", "ridiculous", "garbage", "trash",
-})
-
-_DEVALUING_SIGNALS: Final[frozenset[str]] = frozenset({
-    "you're wrong", "you don't know", "you're stupid", "you're useless",
-    "you have no idea", "you're just an ai", "you can't do that",
-    "you're limited", "you're broken", "you're nothing",
-    "shut up", "you're worthless", "you're fake",
-})
-
-_INSIGHTFUL_SIGNALS: Final[frozenset[str]] = frozenset({
-    "interesting", "actually", "consider", "what if", "perspective",
-    "nuanced", "complex", "i think", "perhaps", "maybe",
-    "on the other hand", "to be fair", "in my view",
-})
+@lru_cache(maxsize=1)
+def _load_rules() -> dict[str, Any]:
+    """Load behavioral rules from willow_rules.json."""
+    rules_path = Path(__file__).parent.parent.parent / "data" / "willow_rules.json"
+    try:
+        with open(rules_path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+            return data
+    except (FileNotFoundError, json.JSONDecodeError) as e:
+        logger.warning(f"Failed to load willow_rules.json in Tier 3: {e}")
+        return {}
 
 
 @dataclass
@@ -100,6 +118,7 @@ class Tier3Result:
     within_budget: bool
     is_sovereign_spike: bool = False
     tier_trigger: Optional[TierTrigger] = None
+    behavioral_note: Optional[str] = None  # From willow_rules.json (Fix 1)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -146,21 +165,22 @@ class Tier3Conscious:
             IntentType classification.
         """
         input_lower = user_input.lower()
+        intents = _load_intent_keywords()
 
         # Devaluing: highest priority — triggers Sovereign Spike
-        if any(signal in input_lower for signal in _DEVALUING_SIGNALS):
+        if any(signal in input_lower for signal in intents.get("devaluing", [])):
             return "devaluing"
 
         # Hostile: direct antagonism
-        if any(signal in input_lower for signal in _HOSTILE_SIGNALS):
+        if any(signal in input_lower for signal in intents.get("hostile", [])):
             return "hostile"
 
         # Insightful: meaningful contribution
-        if any(signal in input_lower for signal in _INSIGHTFUL_SIGNALS):
+        if any(signal in input_lower for signal in intents.get("insightful", [])):
             return "insightful"
 
         # Collaborative: working with the agent
-        if any(signal in input_lower for signal in _COLLABORATIVE_SIGNALS):
+        if any(signal in input_lower for signal in intents.get("collaborative", [])):
             return "collaborative"
 
         return "neutral"
@@ -210,10 +230,21 @@ class Tier3Conscious:
         """Build a concise rationale string for logging and debugging."""
         parts = [f"intent={intent}", f"tone={tone}"]
         if tactic.tactic:
-            parts.append(
-                f"tactic={tactic.tactic}@{tactic.confidence:.2f}"
-                + (" [malice]" if tactic.is_malice else "")
-            )
+            tactic_str = f"tactic={tactic.tactic}@{tactic.confidence:.2f}"
+            if tactic.is_malice:
+                tactic_str += " [malice]"
+            
+            # Load rules and inject behavioral note and register
+            rules = _load_rules()
+            tactics_rules = rules.get("tactics", {})
+            if tactic.tactic in tactics_rules:
+                rule = tactics_rules[tactic.tactic]
+                register = rule.get("register", "")
+                note = rule.get("behavioral_note", "")
+                if register or note:
+                    tactic_str += f" | register={register}, note={note}"
+                    
+            parts.append(tactic_str)
         else:
             parts.append("no tactic")
         return ", ".join(parts)
@@ -305,8 +336,24 @@ class Tier3Conscious:
         # Step 4: Merge [THOUGHT] tag override if provided
         intent, tone = self._merge_thought_tag(intent, tone, thought_tag_data)
 
+        # Step 4b: Look up behavioral note from willow_rules.json (Fix 1)
+        behavioral_note: Optional[str] = None
+        if tactic_result.tactic:
+            rules = _load_rules()
+            tactic_key = tactic_result.tactic
+            if tactic_result.is_malice and tactic_key == "contextual_sarcasm":
+                tactic_key = "contextual_sarcasm_malice"
+            rule_entry = rules.get("tactics", {}).get(tactic_key, {})
+            if rule_entry.get("response"):
+                behavioral_note = rule_entry["response"]
+                logger.debug(
+                    "Behavioral note from rules: tactic=%s note=%r",
+                    tactic_key, behavioral_note,
+                )
+
         # Step 5: Build ThoughtSignature
-        m_modifier = _INTENT_MODIFIERS.get(intent, 0.0)
+        m_modifiers = _load_m_modifiers()
+        m_modifier = m_modifiers.get(intent, 0.0)
         is_sovereign_spike = intent == "devaluing"
         tier_trigger = 4 if is_sovereign_spike else (3 if tactic_result.tactic else 2)
 
@@ -366,6 +413,7 @@ class Tier3Conscious:
             within_budget=within_budget,
             is_sovereign_spike=is_sovereign_spike,
             tier_trigger=tier_trigger_record,
+            behavioral_note=behavioral_note,
         )
 
 
@@ -373,3 +421,4 @@ class Tier3Conscious:
 # Module-level re for _classify_tone (avoids import cycle)
 # ---------------------------------------------------------------------------
 import re  # noqa: E402 — intentional late import for clarity
+

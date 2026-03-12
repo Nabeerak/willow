@@ -441,25 +441,25 @@
              <h3 class="text-sm font-medium text-white">Thought Signature</h3>
              
              <div class="w-full py-1.5 px-3 bg-blue-600/20 border border-blue-500/30 rounded-full text-center">
-               <span class="text-[10px] text-blue-300 font-medium uppercase tracking-wide">Tactic: <span id="tactic-badge" class="text-white">Soothing</span></span>
+               <span class="text-[10px] text-blue-300 font-medium uppercase tracking-wide">Tactic: <span id="tactic-badge" class="text-white">--</span></span>
              </div>
 
              <div class="bg-[#1A2030] rounded-lg overflow-hidden border border-white/5">
                <div class="grid grid-cols-2 border-b border-white/5 bg-white/5">
-                 <div class="p-1.5 text-[10px] text-gray-400 font-medium pl-3">Intent / Tone</div>
+                 <div class="p-1.5 text-[10px] text-gray-400 font-medium pl-3">Intent</div>
                  <div class="p-1.5 text-[10px] text-gray-400 font-medium">Tone</div>
                </div>
                <div class="grid grid-cols-2 border-b border-white/5">
-                 <div class="p-1.5 text-[10px] text-gray-300 pl-3">Confident</div>
-                 <div class="p-1.5 text-[10px] text-gray-300">Soothing</div>
+                 <div class="p-1.5 text-[10px] text-gray-300 pl-3" id="ts-intent">--</div>
+                 <div class="p-1.5 text-[10px] text-gray-300" id="ts-tone">--</div>
                </div>
                <div class="grid grid-cols-2 border-b border-white/5">
-                 <div class="p-1.5 text-[10px] text-gray-300 pl-3">Complete</div>
-                 <div class="p-1.5 text-[10px] text-gray-300">Soothing</div>
+                 <div class="p-1.5 text-[10px] text-gray-400 font-medium pl-3">M modifier</div>
+                 <div class="p-1.5 text-[10px] text-gray-400 font-medium">Tier fired</div>
                </div>
                <div class="grid grid-cols-2">
-                 <div class="p-1.5 text-[10px] text-gray-300 pl-3">Interruption</div>
-                 <div class="p-1.5 text-[10px] text-gray-300">Peak</div>
+                 <div class="p-1.5 text-[10px] text-gray-300 pl-3" id="ts-m-modifier">--</div>
+                 <div class="p-1.5 text-[10px] text-gray-300" id="ts-tier-fired">--</div>
                </div>
              </div>
           </div>
@@ -489,6 +489,7 @@
             <div class="flex justify-between"><span class="text-white/40">cold_start</span><span id="dbg-cold-start" class="text-white/90">--</span></div>
             <div class="flex justify-between"><span class="text-white/40">troll_defense</span><span id="dbg-troll-defense" class="text-white/90">--</span></div>
             <div class="flex justify-between"><span class="text-white/40">spike_count</span><span id="dbg-spike-count" class="text-white/90">0</span></div>
+            <div class="flex justify-between"><span class="text-white/40">pitch_hz</span><span id="dbg-pitch-hz" class="text-white/90">--</span></div>
           </div>
         </section>
 
@@ -555,13 +556,13 @@
       const BACKEND_HTTP = window.WILLOW_BACKEND_URL || '';
       const BACKEND_WS = BACKEND_HTTP
         ? BACKEND_HTTP.replace(/^http/, 'ws')
-        : `${location.protocol === 'https:' ? 'wss:' : 'ws:'}//localhost:8080`;
+        : `${location.protocol === 'https:' ? 'wss:' : 'ws:'}//${location.host}`;
 
       // --- Types & Constants ---
 
       const INITIAL_STATE = {
         status: 'IDLE',
-        mModifier: 0.6,
+        mModifier: parseFloat(localStorage.getItem('willow_m_modifier')) || 0.6,
         isColdStart: true,
         isTrollDefense: true,
         latency: { t1: 20, t2: 50, t3: 150, t4: 300 },
@@ -579,6 +580,8 @@
         #audioContext = null;
         #analyser = null;
         #dataArray = null;
+        #pitchHz = 0;
+        #pitchHistory = [];  // rolling window for pitch smoothing
         #animationFrameId = null;
         #mockSocketInterval = null;
         #sessionTimerInterval = null;
@@ -725,6 +728,7 @@
             val = Math.max(0, Math.min(1, val));
             
             this.#state.mModifier = val;
+            localStorage.setItem('willow_m_modifier', val.toFixed(4));
             this.#render();
         }
 
@@ -798,7 +802,9 @@
             this.#render();
 
             await this.#startAudio();
-            if (!this.#sessionTimerInterval) this.#startSessionTimer();
+            // Reset timer on first entry, resume on MIC_OFF → LIVE toggle
+            const isResume = this.#state.sessionDuration > 0;
+            this.#startSessionTimer(/* reset */ !isResume);
             this.#startDebugPolling();
           }
           else if (newState === 'MIC_OFF') {
@@ -807,6 +813,9 @@
             this.#elements.micIcon.classList.add('text-gray-400');
             this.#elements.micProgress.style.strokeDashoffset = '289';
             this.#stopMicCapture();
+            // Pause session timer while mic is off
+            this.#stopSessionTimer();
+            // Keep debug polling alive so turn counter stays current
           }
           else if (newState === 'IDLE') {
             this.#preflightActive = false;
@@ -815,6 +824,7 @@
 
             this.#stopMicCapture();
             this.#stopSessionTimer();
+            this.#state.sessionDuration = 0;
             this.#stopDebugPolling();
 
             if (this.#ws && this.#ws.readyState === WebSocket.OPEN) {
@@ -879,6 +889,7 @@
 
           switch (msg.type) {
             case 'turn_complete':
+              if (msg.user_text) this.#addTranscriptEntry('user', msg.user_text);
               if (msg.text) this.#addTranscriptEntry('willow', msg.text);
               // Ensure thinking indicator is hidden and UI is reset, even if audio playback is already finished
               this.#elements.thinking.classList.add('opacity-0');
@@ -955,7 +966,9 @@
 
         #ensurePlaybackCtx() {
           if (!this.#playbackCtx || this.#playbackCtx.state === 'closed') {
-            this.#playbackCtx = new AudioContext({ sampleRate: 24000 });
+            // Use system default rate (typically 48kHz) — createBuffer()
+            // resamples from 24kHz source. Forcing 24kHz causes artifacts.
+            this.#playbackCtx = new AudioContext();
             this.#nextPlayTime = 0;
           }
           // Resume if suspended (autoplay policy)
@@ -1060,7 +1073,7 @@
             tzEl.className = `font-semibold ${tzColors[b.tone_zone] || 'text-white/90'}`;
           }
 
-          // Thought Signature
+          // Thought Signature — debug overlay
           const ts = data.thought_signature || {};
           setDbg('dbg-intent', ts.intent);
           setDbg('dbg-tone', ts.tone);
@@ -1068,6 +1081,14 @@
           setDbg('dbg-m-modifier', ts.m_modifier?.toFixed(2));
           setDbg('dbg-tier-fired', ts.tier_fired);
           setDbg('dbg-rationale', ts.rationale);
+
+          // Thought Signature — main panel (previously hardcoded static)
+          setDbg('ts-intent', ts.intent);
+          setDbg('ts-tone', ts.tone);
+          setDbg('ts-m-modifier', ts.m_modifier != null ? ts.m_modifier.toFixed(2) : null);
+          setDbg('ts-tier-fired', ts.tier_fired != null ? `T${ts.tier_fired}` : null);
+          const tacticBadge = document.getElementById('tactic-badge');
+          if (tacticBadge) tacticBadge.textContent = ts.detected_tactic ?? '--';
 
           // Tier 4 Gates
           const t4 = data.tier4 || {};
@@ -1196,7 +1217,7 @@
             const source = this.#audioContext.createMediaStreamSource(stream);
 
             this.#analyser = this.#audioContext.createAnalyser();
-            this.#analyser.fftSize = 256;
+            this.#analyser.fftSize = 2048;  // higher resolution for pitch detection
             this.#analyser.smoothingTimeConstant = 0.8;
             source.connect(this.#analyser);
 
@@ -1225,10 +1246,11 @@
           const targetRate = 16000;
           const sourceRate = this.#audioContext.sampleRate;
 
-          const SILENCE_RMS = 400;        // 16-bit PCM RMS threshold for "silence"
+          const SILENCE_RMS = parseInt(localStorage.getItem('willow_silence_rms'), 10) || 400;
           const SILENCE_MS  = 1500;       // 1.5s of silence triggers end_turn
           let silenceStart = null;
           let turnActive = false;
+          let lastPitchSend = 0;
 
           this.#scriptProcessor.onaudioprocess = (e) => {
             if (this.#state.status !== 'LIVE' || !this.#ws || this.#ws.readyState !== WebSocket.OPEN) return;
@@ -1245,6 +1267,13 @@
 
             // Send audio to server
             this.#ws.send(pcm16.buffer);
+
+            // Send pitch metadata every ~500ms
+            const now = performance.now();
+            if (this.#pitchHz > 0 && now - lastPitchSend > 500) {
+              this.#ws.send(JSON.stringify({ type: 'pitch', hz: this.#pitchHz }));
+              lastPitchSend = now;
+            }
 
             // Client-side silence detection for end-of-turn
             let sum = 0;
@@ -1332,10 +1361,53 @@
           this.#isPlaying = false;
         }
 
+        // FFT pitch detection via autocorrelation on time-domain data.
+        // Returns estimated fundamental frequency in Hz, or 0 if no pitch detected.
+        #detectPitch() {
+          if (!this.#analyser || !this.#audioContext) return 0;
+          const buf = new Float32Array(this.#analyser.fftSize);
+          this.#analyser.getFloatTimeDomainData(buf);
+
+          // Check if signal has enough energy
+          let rms = 0;
+          for (let i = 0; i < buf.length; i++) rms += buf[i] * buf[i];
+          rms = Math.sqrt(rms / buf.length);
+          if (rms < 0.01) return 0;  // too quiet
+
+          // Autocorrelation pitch detection
+          const sampleRate = this.#audioContext.sampleRate;
+          const minLag = Math.floor(sampleRate / 500);  // 500 Hz max
+          const maxLag = Math.floor(sampleRate / 70);   // 70 Hz min
+          let bestCorr = 0;
+          let bestLag = 0;
+          for (let lag = minLag; lag < maxLag && lag < buf.length; lag++) {
+            let corr = 0;
+            for (let i = 0; i < buf.length - lag; i++) {
+              corr += buf[i] * buf[i + lag];
+            }
+            if (corr > bestCorr) {
+              bestCorr = corr;
+              bestLag = lag;
+            }
+          }
+          if (bestLag === 0) return 0;
+          const hz = sampleRate / bestLag;
+
+          // Smooth with rolling window (last 5 frames)
+          this.#pitchHistory.push(hz);
+          if (this.#pitchHistory.length > 5) this.#pitchHistory.shift();
+          const avg = this.#pitchHistory.reduce((a, b) => a + b, 0) / this.#pitchHistory.length;
+          this.#pitchHz = Math.round(avg);
+          return this.#pitchHz;
+        }
+
         #drawVisualizer() {
           if (!this.#analyser || !this.#dataArray) return;
 
           this.#analyser.getByteFrequencyData(this.#dataArray);
+          const pitch = this.#detectPitch();
+          const pitchEl = document.getElementById('dbg-pitch-hz');
+          if (pitchEl) pitchEl.textContent = pitch > 0 ? `${pitch} Hz` : '--';
           
           const canvas = this.#elements.visualizerCanvas;
           const ctx = canvas.getContext('2d');
@@ -1489,21 +1561,26 @@
           this.#addTranscriptEntry('willow', phrases[Math.floor(Math.random() * phrases.length)]);
         }
 
-        #startSessionTimer() {
-          this.#state.sessionDuration = 0;
+        #startSessionTimer(reset = true) {
+          if (reset) this.#state.sessionDuration = 0;
+          // Clear any existing interval before starting a new one
+          if (this.#sessionTimerInterval) clearInterval(this.#sessionTimerInterval);
           this.#sessionTimerInterval = window.setInterval(() => {
             this.#state.sessionDuration++;
             const mins = Math.floor(this.#state.sessionDuration / 60).toString().padStart(2, '0');
             const secs = (this.#state.sessionDuration % 60).toString().padStart(2, '0');
             const timeStr = `${mins}:${secs}`;
-            
+
             if (this.#elements.sessionTimer) this.#elements.sessionTimer.innerText = timeStr;
             if (this.#elements.mobileSessionTimer) this.#elements.mobileSessionTimer.innerText = timeStr;
           }, 1000);
         }
 
         #stopSessionTimer() {
-          if (this.#sessionTimerInterval) clearInterval(this.#sessionTimerInterval);
+          if (this.#sessionTimerInterval) {
+            clearInterval(this.#sessionTimerInterval);
+            this.#sessionTimerInterval = null;
+          }
         }
 
         #startDebugPolling() {

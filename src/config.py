@@ -100,6 +100,7 @@ class GeminiConfig:
     """Gemini API configuration settings."""
     api_key: Optional[str] = None
     model_id: str = "gemini-2.5-flash-native-audio-preview-12-2025"
+    voice_name: str = "Aoede"
 
     @classmethod
     def from_env(cls) -> "GeminiConfig":
@@ -112,6 +113,7 @@ class GeminiConfig:
         return cls(
             api_key=api_key,
             model_id=os.getenv("GEMINI_MODEL_ID", "gemini-2.5-flash-native-audio-preview-12-2025"),
+            voice_name=os.getenv("GEMINI_VOICE_NAME", "Aoede"),
         )
 
     def validate(self) -> None:
@@ -142,7 +144,7 @@ class NoiseGateConfig:
     hold_ms: int = 200
     preflight_duration_ms: int = 3000  # T028 / FR-013: 3-second pre-flight warmup
     buffer_size: int = 1024            # T026 / FR-011: initial streaming buffer (samples)
-    enable_pitch_analysis: bool = False  # T027 / FR-012: placeholder for future FFT pitch analysis
+    enable_pitch_analysis: bool = True  # T027 / FR-012: FFT pitch analysis via client autocorrelation
 
 
 @dataclass

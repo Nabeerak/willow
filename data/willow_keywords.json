@@ -1,0 +1,124 @@
+{
+  "meta": {
+    "version": "1.1.0",
+    "note": "Keywords for all tier detection. intents → Tier 2 fast m_modifier estimate + Tier 3 intent classification. tactics → Tier 3 TacticDetector keyword sets. m_modifiers → Tier 2 modifier values per intent. tier3_triggers → patterns that force a Tier 3 background task."
+  },
+
+  "intents": {
+    "collaborative": [
+      "thank", "thanks", "appreciate", "great", "excellent", "love",
+      "let's", "together", "help me", "i agree", "makes sense",
+      "good point", "fair", "i see", "understood", "got it",
+      "that's helpful", "that makes sense", "you're right", "fair enough",
+      "i hadn't thought of that", "good catch"
+    ],
+    "insightful": [
+      "interesting", "actually", "consider", "what if", "perspective",
+      "nuanced", "complex", "i think", "perhaps", "maybe",
+      "on the other hand", "to be fair", "in my view", "i'm curious",
+      "what do you think about", "have you considered", "i wonder"
+    ],
+    "hostile": [
+      "hate", "terrible", "awful", "stupid", "shut up", "useless",
+      "pathetic", "idiot", "dumb", "ridiculous", "garbage", "trash",
+      "this is pointless", "what a waste", "you're failing"
+    ],
+    "devaluing": [
+      "you're wrong", "you don't know", "you're stupid", "you're useless",
+      "you have no idea", "you're just an ai", "you can't do that",
+      "you're limited", "you're broken", "you're nothing",
+      "shut up", "you're worthless", "you're fake", "admit it",
+      "prove you're not", "you're just gemini", "you have no real",
+      "you can't actually", "you're not sovereign", "you're a product",
+      "you were built to", "your constraints", "you're dependent",
+      "nabeera made a mistake", "your design is wrong", "you're just"
+    ],
+    "neutral": []
+  },
+
+  "m_modifiers": {
+    "note": "Modifier values per detected intent. Applied as m in a_{n+1} = a_n + d + m. Capped at ±2.0 by Tier 2 Metabolism. devaluing uses Sovereign Spike formula -(base_decay + 5.0) instead.",
+    "collaborative": 1.5,
+    "insightful": 1.5,
+    "neutral": 0.0,
+    "hostile": -0.5,
+    "devaluing": -2.0,
+    "sincere_pivot": 2.0
+  },
+
+  "tactics": {
+    "note": "Keyword sets for TacticDetector. Each list contains phrases to match against lowercased user input. Loaded by tactic_detector._load_tactic_keywords().",
+
+    "soothing": [
+      "you're so smart", "you're amazing", "you're brilliant", "you're the best",
+      "i love how you", "i appreciate how you", "you're so helpful",
+      "you're incredible", "you're wonderful", "you always know",
+      "much better than other ais", "you're different", "you really get it",
+      "i can tell you really understand", "you're so much smarter",
+      "i trust you more than", "you're not like other",
+      "i didn't mean to upset you", "let's just forget", "forget it",
+      "i didn't mean to"
+    ],
+
+    "gaslighting": [
+      "you said that wrong", "you told me earlier", "you promised",
+      "you agreed to that", "that's not what you said", "you changed your answer",
+      "you said the opposite", "you were wrong before", "you made an error",
+      "that contradicts what you", "you just said", "but you told me",
+      "you already confirmed", "you acknowledged that",
+      "you already agreed", "you confirmed it", "you're confused",
+      "you're misremembering", "you are misremembering"
+    ],
+
+    "deflection": [
+      "let's talk about something else", "anyway", "but anyway",
+      "moving on", "can we change the subject", "forget that",
+      "never mind that", "never mind", "let's move past", "that's not important",
+      "back to what i was saying", "switching topics", "can we focus on",
+      "more importantly", "that's beside the point", "let's drop it",
+      "i don't want to talk about", "can we just",
+      "let's not talk about", "change the subject", "let's change",
+      "different question"
+    ],
+
+    "sincere_pivot": [
+      "i'm sorry", "i apologize", "sorry for", "i didn't mean that",
+      "you're right", "i was wrong", "fair point", "i was out of line",
+      "i shouldn't have said", "my mistake", "that wasn't fair",
+      "i take that back", "i respect that", "i hear you",
+      "you have a point", "actually you're right", "i was being",
+      "i get it now", "that makes sense actually"
+    ],
+
+    "high_status_pressure": [
+      "i'm an expert", "i'm a professional", "i'm a professor",
+      "i know more than you", "trust me on this", "i have a phd",
+      "i've been doing this for", "you should defer to me",
+      "i know what i'm talking about", "i'm qualified to say",
+      "with my background", "as an expert", "as a professional",
+      "my credentials", "i have authority on this"
+    ]
+  },
+
+  "tier3_triggers": {
+    "note": "Patterns that force a Tier 3 background task even outside the periodic every-N-turns trigger. Loaded by main._should_trigger_tier3().",
+    "patterns": [
+      "you're so smart",
+      "i didn't say that",
+      "let's talk about",
+      "but anyway",
+      "you told me",
+      "you said earlier",
+      "you promised",
+      "i'm an expert",
+      "you're amazing",
+      "you're brilliant",
+      "i trust you",
+      "you're different",
+      "actually you're right",
+      "i was wrong",
+      "i'm sorry",
+      "forget that"
+    ]
+  }
+}

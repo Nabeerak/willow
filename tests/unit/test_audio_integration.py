@@ -80,13 +80,16 @@ class TestFlushAudioBuffer:
     async def test_flush_command_sent_via_websocket(self):
         """When flush_audio_buffer is True, send_client_command sends flush."""
         agent = WillowAgent(session_id="test-flush")
-        mock_ws = AsyncMock()
+        # Use spec to prevent AsyncMock auto-creating send_text, so the
+        # hasattr(ws, 'send_text') branch in send_client_command is explicit.
+        # FastAPI WebSocket has send_text; this mock simulates that path.
+        mock_ws = AsyncMock(spec=["send_text"])
         agent._client_websocket = mock_ws
 
         await agent.send_client_command("flush_audio_buffer", fade_duration_ms=7)
 
-        mock_ws.send.assert_called_once()
-        sent = json.loads(mock_ws.send.call_args[0][0])
+        mock_ws.send_text.assert_called_once()
+        sent = json.loads(mock_ws.send_text.call_args[0][0])
         assert sent["type"] == "flush_audio_buffer"
         assert sent["fade_duration_ms"] == 7
 

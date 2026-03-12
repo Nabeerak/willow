@@ -35,12 +35,16 @@
  */
 export async function initNoiseGate(options = {}) {
   const {
-    thresholdDbfs = -50.0,
-    bufferSize: initialBufferSize = 1024,
+    thresholdDbfs = parseFloat(localStorage.getItem('willow_threshold_dbfs')) || -50.0,
+    bufferSize: initialBufferSize = parseInt(localStorage.getItem('willow_buffer_size'), 10) || 1024,
     preflightDurationMs = 3000,
     onPreflightStart = null,
     onPreflightEnd = null,
   } = options;
+
+  // Persist resolved settings for next session
+  localStorage.setItem('willow_threshold_dbfs', thresholdDbfs.toString());
+  localStorage.setItem('willow_buffer_size', initialBufferSize.toString());
 
   // Acquire microphone with echo cancellation enabled
   const micStream = await navigator.mediaDevices.getUserMedia({

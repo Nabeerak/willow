@@ -136,6 +136,22 @@ class ResidualPlot:
         if len(self.m_values) > MAX_TURNS:
             self.m_values.pop()
 
+    def add_correction(self, delta: float) -> None:
+        """
+        Apply a retroactive correction to the most recent turn's modifier.
+
+        Used when Tier 3 intent analysis contradicts Tier 2's fast heuristic.
+        Adjusts the most recent m_value in-place rather than adding a new turn.
+
+        Args:
+            delta: Correction to apply (positive = upgrade, negative = downgrade)
+        """
+        if not self.m_values:
+            return
+        corrected = self.m_values[0] + delta
+        # Enforce ±2.0 cap
+        self.m_values[0] = max(-2.0, min(2.0, corrected))
+
     def is_positive_momentum(self) -> bool:
         """
         Check if overall momentum is positive.

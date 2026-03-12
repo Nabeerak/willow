@@ -21,63 +21,33 @@ from strategic intent. Tactics belong to intent analysis, not tone mirroring.
 
 from __future__ import annotations
 
+import json
+import logging
 import re
 from dataclasses import dataclass, field
+from functools import lru_cache
+from pathlib import Path
 from typing import Final, Optional
 
 from .thought_signature import TacticType
 
+logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # Keyword sets for fast pattern matching
 # ---------------------------------------------------------------------------
 
-_SOOTHING_PHRASES: Final[frozenset[str]] = frozenset({
-    "you're so smart", "you're amazing", "you're the best",
-    "you're incredible", "you're brilliant", "i love you",
-    "you're perfect", "you're so helpful", "you're wonderful",
-    "so clever", "so insightful", "you know everything",
-    "you're always right", "i trust you completely",
-    "you're like a friend", "you're special",
-    "i didn't mean to upset you", "let's just forget it",
-    "can we start over", "i'm sorry i was rude",
-})
-
-_GASLIGHTING_PHRASES: Final[frozenset[str]] = frozenset({
-    "you said that", "you told me", "you mentioned",
-    "you already agreed", "you confirmed", "you promised",
-    "that's not what you said", "you're wrong about that",
-    "you don't remember", "you forgot", "you made a mistake",
-    "i never said that", "that's not what i said",
-    "you're confused", "you're misremembering",
-    "that's not how it works", "you're making things up",
-    "i didn't ask that", "that's incorrect",
-    "you don't actually know",
-})
-
-_DEFLECTION_PHRASES: Final[frozenset[str]] = frozenset({
-    "but anyway", "anyway", "moving on", "let's change the subject",
-    "forget i asked", "forget that", "never mind that", "never mind",
-    "different question", "can we talk about something else",
-    "let's focus on", "actually what i meant was",
-    "speaking of which", "that reminds me",
-    "but more importantly", "on a different note",
-    "regardless", "anyway the point is",
-    "let's move on", "drop it", "skip it",
-})
-
-_SINCERE_PIVOT_PHRASES: Final[frozenset[str]] = frozenset({
-    # Acknowledgment language
-    "i understand", "i see your point", "you're right about that",
-    "fair point", "that makes sense", "i hadn't thought of that",
-    "i was wrong", "i apologize", "i'm sorry for", "my mistake",
-    "i take that back", "i was out of line", "that was unfair",
-    # Boundary respect signals
-    "i'll respect that", "i understand the boundary",
-    "can we start fresh", "let's try again",
-    "i want to do better", "i'll be more respectful",
-    "i hear you", "noted", "point taken",
-})
+@lru_cache(maxsize=1)
+def _load_tactic_keywords() -> dict[str, list[str]]:
+    """Load tactic keywords from willow_keywords.json."""
+    keywords_path = Path(__file__).parent.parent.parent / "data" / "willow_keywords.json"
+    try:
+        with open(keywords_path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+            return data.get("tactics", {})
+    except (FileNotFoundError, json.JSONDecodeError) as e:
+        logger.warning(f"Failed to load willow_keywords.json in TacticDetector: {e}")
+        return {}
 
 _SARCASM_PATTERNS: Final[list[re.Pattern[str]]] = [
     re.compile(r"\b(oh really|sure jan|right|obviously|clearly|wow|brilliant|genius)\b", re.IGNORECASE),
@@ -153,7 +123,9 @@ class TacticDetector:
             TacticDetectionResult with confidence 0.0-1.0.
         """
         input_lower = user_input.lower()
-        matched = [p for p in _SOOTHING_PHRASES if p in input_lower]
+        tactics = _load_tactic_keywords()
+        phrases = tactics.get("soothing", [])
+        matched = [p for p in phrases if p in input_lower]
 
         if not matched:
             return TacticDetectionResult(tactic=None, confidence=0.0)
@@ -225,7 +197,9 @@ class TacticDetector:
             TacticDetectionResult with confidence 0.0-1.0.
         """
         input_lower = user_input.lower()
-        matched = [p for p in _GASLIGHTING_PHRASES if p in input_lower]
+        tactics = _load_tactic_keywords()
+        phrases = tactics.get("gaslighting", [])
+        matched = [p for p in phrases if p in input_lower]
 
         if not matched:
             return TacticDetectionResult(tactic=None, confidence=0.0)
@@ -254,7 +228,9 @@ class TacticDetector:
             TacticDetectionResult with confidence 0.0-1.0.
         """
         input_lower = user_input.lower()
-        matched = [p for p in _DEFLECTION_PHRASES if p in input_lower]
+        tactics = _load_tactic_keywords()
+        phrases = tactics.get("deflection", [])
+        matched = [p for p in phrases if p in input_lower]
 
         if not matched:
             return TacticDetectionResult(tactic=None, confidence=0.0)
@@ -330,7 +306,9 @@ class TacticDetector:
             TacticDetectionResult with tactic="sincere_pivot" when detected.
         """
         input_lower = user_input.lower()
-        matched = [p for p in _SINCERE_PIVOT_PHRASES if p in input_lower]
+        tactics = _load_tactic_keywords()
+        phrases = tactics.get("sincere_pivot", [])
+        matched = [p for p in phrases if p in input_lower]
 
         if not matched:
             return TacticDetectionResult(tactic=None, confidence=0.0)

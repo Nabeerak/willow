@@ -54,17 +54,20 @@ class FillerAudioPlayer:
 
     Filler clips are loaded once at construction into memory (bytes) to
     avoid disk I/O during latency-critical turns. play() streams the
-    pre-loaded bytes and returns a Task that can be cancelled if the user
-    interrupts (T051).
+    pre-loaded bytes over the WebSocket the same way Gemini audio chunks
+    are sent, so the browser hears them in real time.
 
     Attributes:
         data_dir: Path to the filler audio data directory.
         _clips: Dict mapping clip names to raw PCM bytes (post-header strip).
         _active_task: Currently running play task (None if idle).
+        _websocket: Client WebSocket for audio output. Set via set_websocket()
+            when a session connects. None means output is suppressed (test mode).
 
     Usage:
         player = FillerAudioPlayer(data_dir=Path("data/filler_audio"))
         player.load()
+        player.set_websocket(websocket)      # call when session connects
 
         # Queue filler for Tier 3 processing
         clip = player.clip_for_trigger("manipulation_pattern")
@@ -79,6 +82,16 @@ class FillerAudioPlayer:
     # Internal state
     _clips: dict[str, bytes] = field(default_factory=dict, init=False, repr=False)
     _active_task: Optional[asyncio.Task] = field(default=None, init=False, repr=False)
+    _websocket: Optional[object] = field(default=None, init=False, repr=False)
+
+    def set_websocket(self, websocket: Optional[object]) -> None:
+        """
+        Attach (or detach) the client WebSocket for audio output.
+
+        Called by WillowAgent when a session connects/disconnects.
+        None suppresses audio output without raising errors (test mode).
+        """
+        self._websocket = websocket
 
     def load(self) -> None:
         """
@@ -158,11 +171,14 @@ class FillerAudioPlayer:
 
     async def _play_clip(self, clip_name: str, raw_pcm: bytes) -> None:
         """
-        Internal coroutine: simulate PCM streaming duration.
+        Send PCM bytes to the client WebSocket, then hold for playback duration.
 
-        In production, replace this body with real audio output calls
-        (e.g. push bytes to Gemini Live audio channel or sounddevice).
-        Duration is calculated from byte count assuming 16kHz/16-bit/mono.
+        Sends the full clip as a single binary WebSocket frame — the same path
+        Gemini audio chunks use. The browser's AudioWorklet receives the bytes,
+        decodes them as 16kHz/16-bit/mono PCM, and plays them immediately.
+
+        Duration hold ensures the filler is audible before Gemini's response
+        arrives. asyncio.CancelledError fires if the user speaks mid-clip (T051).
         """
         # 16kHz * 2 bytes/sample * 1 channel = 32000 bytes per second
         duration_s = len(raw_pcm) / 32_000
@@ -172,7 +188,23 @@ class FillerAudioPlayer:
         )
         start = time.perf_counter()
         try:
+            # Send PCM bytes to browser over the live WebSocket connection
+            ws = self._websocket
+            if ws is not None:
+                try:
+                    if hasattr(ws, 'send_bytes'):
+                        await ws.send_bytes(raw_pcm)   # FastAPI WebSocket
+                    else:
+                        await ws.send(raw_pcm)         # websockets library
+                except Exception as exc:
+                    logger.debug("Filler WebSocket send failed: %s", exc)
+            else:
+                logger.debug("Filler clip '%s': no WebSocket — output suppressed", clip_name)
+
+            # Hold for the clip's natural duration so the browser plays it
+            # before Gemini's response bytes start arriving
             await asyncio.sleep(duration_s)
+
             elapsed_ms = (time.perf_counter() - start) * 1000
             logger.debug(
                 "Filler playback complete: clip='%s' elapsed=%.1fms",

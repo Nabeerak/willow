@@ -105,6 +105,8 @@ class TestThoughtPartFiltering:
         mock_model_turn.parts = [thought_part]
         mock_server_content.model_turn = mock_model_turn
         mock_server_content.turn_complete = False
+        mock_server_content.input_transcription = None
+        mock_server_content.output_transcription = None
 
         await session._handle_server_content(mock_server_content)
 
@@ -132,6 +134,8 @@ class TestThoughtPartFiltering:
         mock_model_turn.parts = [text_part]
         mock_server_content.model_turn = mock_model_turn
         mock_server_content.turn_complete = False
+        mock_server_content.input_transcription = None
+        mock_server_content.output_transcription = None
 
         await session._handle_server_content(mock_server_content)
 
@@ -165,6 +169,8 @@ class TestThoughtPartFiltering:
         mock_model_turn.parts = [thought_part, text_part]
         mock_server_content.model_turn = mock_model_turn
         mock_server_content.turn_complete = False
+        mock_server_content.input_transcription = None
+        mock_server_content.output_transcription = None
 
         await session._handle_server_content(mock_server_content)
 

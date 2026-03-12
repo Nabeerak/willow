@@ -28,6 +28,8 @@ COLD_START_TURNS: int = 3  # d=0 for first 3 turns (Social Handshake)
 MAX_STATE_CHANGE: float = 2.0  # ±2.0 cap per turn
 SOVEREIGN_SPIKE_THRESHOLD: int = 3  # Consecutive spikes to trigger Troll Defense
 BASE_DECAY_RATE: float = -0.1  # Default decay rate when not in Cold Start
+M_FLOOR: float = -10.0  # Hard floor — prevents indefinite state collapse
+M_CEILING: float = 10.0  # Hard ceiling — prevents unreachable euphoria
 
 
 class SessionStateValidationError(ValueError):
@@ -195,12 +197,12 @@ class StateManager:
                 self._state.cold_start_active = False
                 self._state.base_decay = BASE_DECAY_RATE
 
-            # Apply state formula: aₙ₊₁ = aₙ + d + m
-            self._state.current_m = (
+            # Apply state formula: aₙ₊₁ = aₙ + d + m, clamped to [M_FLOOR, M_CEILING]
+            self._state.current_m = max(M_FLOOR, min(M_CEILING, (
                 self._state.current_m +
                 self._state.base_decay +
                 capped_m
-            )
+            )))
 
             # Track Sovereign Spikes for Troll Defense
             if is_sovereign_spike:
@@ -235,6 +237,57 @@ class StateManager:
 
             return self._state
 
+    async def retroactive_correct(
+        self,
+        tier2_modifier: float,
+        tier3_modifier: float,
+        tier3_is_spike: bool,
+    ) -> Optional[float]:
+        """
+        Apply retroactive correction when Tier 3 intent contradicts Tier 2 heuristic.
+
+        If the delta between Tier 2's fast guess and Tier 3's deep analysis exceeds
+        a significance threshold (0.5), adjust current_m and residual plot to reflect
+        the more accurate Tier 3 assessment.
+
+        Args:
+            tier2_modifier: The m_modifier Tier 2 applied synchronously.
+            tier3_modifier: The m_modifier Tier 3 computed asynchronously.
+            tier3_is_spike: Whether Tier 3 classified as sovereign spike.
+
+        Returns:
+            The correction delta applied, or None if no correction needed.
+        """
+        delta = tier3_modifier - tier2_modifier
+        if abs(delta) < 0.5:
+            return None  # Not significant enough to correct
+
+        async with self._lock:
+            # Apply the correction delta
+            capped_delta = max(-MAX_STATE_CHANGE, min(MAX_STATE_CHANGE, delta))
+            self._state.current_m = max(M_FLOOR, min(M_CEILING, self._state.current_m + capped_delta))
+            self._state.residual_plot.add_correction(capped_delta)
+
+            # If Tier 3 says it's a spike but Tier 2 missed it, update spike tracking
+            if tier3_is_spike and self._state.sovereign_spike_count == 0:
+                self._state.sovereign_spike_count += 1
+                if self._state.sovereign_spike_count >= SOVEREIGN_SPIKE_THRESHOLD:
+                    self._state.troll_defense_active = True
+
+            # If Tier 2 flagged spike but Tier 3 disagrees, undo spike
+            if not tier3_is_spike and tier2_modifier <= -1.0 and tier3_modifier > -0.5:
+                if self._state.sovereign_spike_count > 0:
+                    self._state.sovereign_spike_count -= 1
+
+            self._state.last_updated = datetime.now()
+            logger.info(
+                "Retroactive correction: tier2=%.2f tier3=%.2f delta=%.2f "
+                "new_m=%.2f spike_count=%d",
+                tier2_modifier, tier3_modifier, capped_delta,
+                self._state.current_m, self._state.sovereign_spike_count,
+            )
+            return capped_delta
+
     async def apply_grace_boost(self) -> SessionState:
         """
         Apply Grace Boost for sincere pivot (T042 / T043 / US4).
@@ -258,7 +311,7 @@ class StateManager:
                     MAX_STATE_CHANGE,
                     2.0 + (self._state.consecutive_sincere_turns - 1) * 0.5
                 )
-                self._state.current_m += grace_m
+                self._state.current_m = max(M_FLOOR, min(M_CEILING, self._state.current_m + grace_m))
                 self._state.residual_plot.add_turn(grace_m)
                 self._state.last_updated = datetime.now()
                 logger.debug(

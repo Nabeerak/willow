@@ -250,6 +250,7 @@ class StreamingSession:
         self._current_chunk_index: int = 0
         self._accumulated_user_input: str = ""
         self._accumulated_agent_response: str = ""
+        self._turn_complete_fired: bool = False  # tracks late transcription
         self._activity_started: bool = False
 
         # Tier latency tracking per turn
@@ -362,11 +363,19 @@ class StreamingSession:
                 speech_config=genai_types.SpeechConfig(
                     voice_config=genai_types.VoiceConfig(
                         prebuilt_voice_config=genai_types.PrebuiltVoiceConfig(
-                            voice_name="Aoede"
+                            voice_name=self._gemini_config.voice_name
                         )
                     )
                 ),
             )
+            # Enable transcription for both input (user speech) and output (agent speech)
+            # so on_turn_complete receives real transcript text for the dashboard
+            try:
+                live_config_kwargs["input_audio_transcription"] = genai_types.InputAudioTranscription()
+                live_config_kwargs["output_audio_transcription"] = genai_types.AudioTranscriptionConfig()
+            except (AttributeError, TypeError):
+                logger.warning("[GEMINI] Audio transcription config not available in this SDK version")
+
             # Inject persona system instruction if provided
             if self._system_instruction:
                 live_config_kwargs["system_instruction"] = self._system_instruction
@@ -714,6 +723,48 @@ class StreamingSession:
                     else:
                         self._accumulated_agent_response += part.text
 
+        # Capture user speech transcription from Gemini
+        input_transcription = getattr(server_content, 'input_transcription', None)
+        if input_transcription:
+            text = getattr(input_transcription, 'text', None)
+            if text:
+                self._accumulated_user_input += text
+                logger.info(f"[STREAM] Input transcription: {text[:120]}")
+                # Late transcription after turn_complete — fire a supplementary callback
+                if self._turn_complete_fired and self._on_turn_complete:
+                    late_turn = TurnComplete(
+                        turn_id=self._current_turn_id - 1,
+                        user_input=text,
+                        agent_response="",
+                        m_modifier=0.0,
+                        tier_latencies={},
+                    )
+                    try:
+                        await self._on_turn_complete(late_turn)
+                    except Exception as e:
+                        logger.error(f"Late transcription callback error: {e}")
+
+        # Capture agent speech transcription (audio-only mode doesn't produce text parts)
+        output_transcription = getattr(server_content, 'output_transcription', None)
+        if output_transcription:
+            text = getattr(output_transcription, 'text', None)
+            if text:
+                self._accumulated_agent_response += text
+                logger.info(f"[STREAM] Output transcription: {text[:120]}")
+                # Late agent transcription — send to dashboard
+                if self._turn_complete_fired and self._on_turn_complete:
+                    late_turn = TurnComplete(
+                        turn_id=self._current_turn_id - 1,
+                        user_input="",
+                        agent_response=text,
+                        m_modifier=0.0,
+                        tier_latencies={},
+                    )
+                    try:
+                        await self._on_turn_complete(late_turn)
+                    except Exception as e:
+                        logger.error(f"Late output transcription callback error: {e}")
+
         # Check for turn completion
         if server_content.turn_complete:
             await self._handle_turn_complete()
@@ -833,6 +884,40 @@ class StreamingSession:
         capped = max(-2.0, min(2.0, m_modifier))
         # Will be used when creating TurnComplete
         self._tier_latencies["_m_modifier"] = capped
+
+    async def update_system_instruction(self, instruction: str) -> None:
+        """
+        DEPRECATED — Do not use. Sending a setup message mid-session
+        reinitializes voice generation parameters, causing audio thinning.
+        Use inject_behavioral_context() instead.
+        """
+        logger.warning("[GEMINI] update_system_instruction is deprecated — use inject_behavioral_context()")
+
+    async def inject_behavioral_context(self, directive: str) -> None:
+        """
+        Inject a behavioral directive into conversation context between turns.
+
+        Uses send_client_content() to add a context turn that guides
+        Gemini's tone/style for the next response WITHOUT reinitializing
+        voice parameters. This preserves audio quality across turns.
+
+        Args:
+            directive: Behavioral instruction (e.g., m-zone style directive)
+        """
+        if not self._live_session:
+            logger.warning("[GEMINI] Cannot inject context: no live session")
+            return
+        try:
+            await self._live_session.send_client_content(
+                turns=genai_types.Content(
+                    role="user",
+                    parts=[genai_types.Part(text=f"[SYSTEM CONTEXT — not user speech] {directive}")],
+                ),
+                turn_complete=False,
+            )
+            logger.debug("[GEMINI] Behavioral context injected (%d chars)", len(directive))
+        except Exception as e:
+            logger.warning(f"[GEMINI] behavioral context injection failed: {e}")
 
     def to_session_info(self) -> dict:
         """

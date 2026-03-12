@@ -10,9 +10,15 @@ supporting both standard state transitions and sovereign spike calculations
 for devaluing intent detection.
 """
 
+import json
+import logging
 import time
 from dataclasses import dataclass, field
+from functools import lru_cache
+from pathlib import Path
 from typing import Final
+
+logger = logging.getLogger(__name__)
 
 # Constants for Tier 2 metabolism behavior
 COLD_START_TURNS: Final[int] = 3
@@ -22,10 +28,10 @@ BASE_DECAY_RATE: Final[float] = -0.1
 # Latency budget in milliseconds
 LATENCY_BUDGET_MS: Final[float] = 5.0
 
-# T029: Intent → m_modifier mapping (FR values, capped at ±2.0 for ThoughtSignature).
+# T029: Intent → m_modifier fallback (used if JSON load fails).
 # Devaluing triggers Sovereign Spike via calculate_sovereign_spike(); the -2.0 entry
 # is what the ThoughtSignature field stores (clamped).
-INTENT_MODIFIERS: Final[dict[str, float]] = {
+_INTENT_MODIFIERS_FALLBACK: Final[dict[str, float]] = {
     "collaborative": 1.5,
     "insightful": 1.5,
     "neutral": 0.0,
@@ -33,6 +39,29 @@ INTENT_MODIFIERS: Final[dict[str, float]] = {
     "devaluing": -2.0,  # Sovereign Spike clamped value; actual spike = -(base_decay + 5.0)
     "sincere_pivot": 2.0,  # T042 / US4: Grace Boost — full +2.0 applied when current_m < 0
 }
+
+
+@lru_cache(maxsize=1)
+def _load_m_modifiers() -> dict[str, float]:
+    """Load m_modifier values from willow_keywords.json m_modifiers section."""
+    keywords_path = Path(__file__).parent.parent.parent / "data" / "willow_keywords.json"
+    try:
+        with open(keywords_path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+            loaded = {
+                k: float(v)
+                for k, v in data.get("m_modifiers", {}).items()
+                if k != "note" and isinstance(v, (int, float))
+            }
+            if loaded:
+                return loaded
+    except (FileNotFoundError, json.JSONDecodeError) as e:
+        logger.warning("Failed to load m_modifiers from willow_keywords.json: %s", e)
+    return dict(_INTENT_MODIFIERS_FALLBACK)
+
+
+# Public alias kept for backward compat — reads from JSON at first access
+INTENT_MODIFIERS: dict[str, float] = _INTENT_MODIFIERS_FALLBACK  # type: ignore[assignment]
 
 
 def map_intent_to_modifier(
@@ -63,7 +92,7 @@ def map_intent_to_modifier(
         # before applying. The +2.0 modifier is unconditional here; the guard
         # lives in StateManager.apply_grace_boost() / update().
         return (2.0, False)
-    return (INTENT_MODIFIERS.get(intent, 0.0), False)
+    return (_load_m_modifiers().get(intent, 0.0), False)
 
 
 @dataclass

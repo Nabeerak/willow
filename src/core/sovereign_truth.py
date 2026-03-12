@@ -10,7 +10,10 @@ Part of Principle III: Integrity (The Anchor) from the Willow Constitution.
 
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import List, Optional
+from typing import TYPE_CHECKING, List, Optional
+
+if TYPE_CHECKING:
+    from .embedding import EmbeddingService
 
 
 class SovereignTruthValidationError(ValueError):
@@ -28,7 +31,7 @@ def _validate_sovereign_truth(
     assertion: str,
     contradiction_keywords: list[str],
     response_template: str,
-    priority: int,
+    priority: int | bool,
 ) -> None:
     """
     Validate SovereignTruth fields.
@@ -38,7 +41,7 @@ def _validate_sovereign_truth(
         assertion: The factual statement
         contradiction_keywords: Non-empty list of keywords for deterministic matching
         response_template: Pre-written persona-calibrated response text
-        priority: Priority level (1-10, where 1 is highest priority)
+        priority: Priority level (int 1-10 or boolean)
 
     Raises:
         SovereignTruthValidationError: If validation fails
@@ -62,15 +65,16 @@ def _validate_sovereign_truth(
     if not response_template or not response_template.strip():
         raise SovereignTruthValidationError("response_template cannot be empty")
 
-    if not isinstance(priority, int):
+    if not isinstance(priority, (int, bool)):
         raise SovereignTruthValidationError(
-            f"priority must be an integer, got {type(priority).__name__}"
+            f"priority must be an integer or boolean, got {type(priority).__name__}"
         )
 
-    if priority < 1 or priority > 10:
-        raise SovereignTruthValidationError(
-            f"priority must be between 1 and 10, got {priority}"
-        )
+    if type(priority) is int:
+        if priority < 1 or priority > 10:
+            raise SovereignTruthValidationError(
+                f"priority must be between 1 and 10, got {priority}"
+            )
 
 
 @dataclass(frozen=True)
@@ -107,7 +111,7 @@ class SovereignTruth:
     assertion: str
     contradiction_keywords: tuple[str, ...]
     response_template: str
-    priority: int
+    priority: int | bool
     vacuum_mode: bool = False
     response_on_return: Optional[str] = None
     created_at: datetime = field(default_factory=datetime.now)
@@ -342,6 +346,7 @@ class SovereignTruthCache:
         self._truths: Dict[str, SovereignTruth] = {}
         self._maxsize = maxsize
         self._top_10_keys: List[str] = []
+        self._embedding_service: Optional["EmbeddingService"] = None
 
     def load_from_json(self, filepath: str | Path) -> int:
         """
@@ -377,11 +382,21 @@ class SovereignTruthCache:
 
         return len(self._truths)
 
+    def init_embeddings(self) -> int:
+        """Initialize vector embedding service for semantic fallback.
+
+        Returns:
+            Number of truths embedded, or 0 if unavailable.
+        """
+        from .embedding import EmbeddingService
+        self._embedding_service = EmbeddingService()
+        return self._embedding_service.preload(list(self._truths.values()))
+
     def _update_top_10(self) -> None:
         """Update the list of top 10 priority truth keys."""
         sorted_truths = sorted(
             self._truths.values(),
-            key=lambda t: t.priority
+            key=lambda t: (0 if t.priority is True else t.priority)
         )
         self._top_10_keys = [t.key for t in sorted_truths[:self._maxsize]]
 
@@ -533,14 +548,45 @@ class SovereignTruthCache:
 
         Single-keyword matches are included — T070 enforces the 2-keyword
         minimum and handles interrogative strictness.
+
+        Falls back to vector embedding similarity when keyword matching
+        finds no candidates and EmbeddingService is available.
         """
         results = []
+        
+        # Pass 1: Check only truths where "priority": True against user input.
         for truth in self._truths.values():
-            for kw in truth.contradiction_keywords:
-                kw_norm = self._normalize_input(kw)
-                if kw_norm in normalized:
+            if truth.priority is True:
+                for kw in truth.contradiction_keywords:
+                    kw_norm = self._normalize_input(kw)
+                    if kw_norm in normalized:
+                        results.append(truth)
+                        break
+
+        # Pass 2: Only if Pass 1 finds no match, check remaining truths.
+        if not results:
+            for truth in self._truths.values():
+                if truth.priority is not True:
+                    for kw in truth.contradiction_keywords:
+                        kw_norm = self._normalize_input(kw)
+                        if kw_norm in normalized:
+                            results.append(truth)
+                            break
+
+        # Semantic fallback: if no keyword matches, try vector similarity
+        if not results and self._embedding_service:
+            similar = self._embedding_service.find_similar(
+                normalized, list(self._truths.values()), top_k=2
+            )
+            for key, score in similar:
+                truth = self._truths.get(key)
+                if truth:
+                    _logger.info(
+                        "Semantic fallback matched truth '%s' (cosine=%.3f)",
+                        key, score,
+                    )
                     results.append(truth)
-                    break
+
         return results
 
     # ------------------------------------------------------------------
