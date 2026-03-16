@@ -21,8 +21,26 @@ Per Constitution Principle I: Warm but Sharp — never cold, never a pushover.
 from __future__ import annotations
 
 import hashlib
+import json
+import logging
 from dataclasses import dataclass
+from functools import lru_cache
+from pathlib import Path
 from typing import Final, Literal
+
+logger = logging.getLogger(__name__)
+
+
+@lru_cache(maxsize=1)
+def _load_persona() -> dict:
+    """Load willow_persona.json. Falls back to empty dict on failure."""
+    persona_path = Path(__file__).parent.parent.parent / "data" / "willow_persona.json"
+    try:
+        with open(persona_path, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError) as e:
+        logger.warning("Failed to load willow_persona.json — using hardcoded defaults: %s", e)
+        return {}
 
 MRange = Literal["high_m", "neutral_m", "low_m"]
 
@@ -57,7 +75,7 @@ def _cycle_index(seed: str, pool_size: int) -> int:
 # Cycled using _cycle_index(seed) to avoid the Deterministic Trap.
 # ---------------------------------------------------------------------------
 
-OPENERS: Final[dict[MRange, list[str]]] = {
+_OPENERS_FALLBACK: Final[dict[str, list[str]]] = {
     "high_m": [
         "That's worth thinking about carefully —",
         "Hm. Here's how I see it:",
@@ -79,6 +97,11 @@ OPENERS: Final[dict[MRange, list[str]]] = {
     ],
 }
 
+
+def _get_openers() -> dict[str, list[str]]:
+    """Return openers dict from willow_persona.json, falling back to hardcoded."""
+    return _load_persona().get("openers", _OPENERS_FALLBACK)
+
 # ---------------------------------------------------------------------------
 # Analogy pool — injected selectively into high_m responses (T030)
 #
@@ -86,7 +109,7 @@ OPENERS: Final[dict[MRange, list[str]]] = {
 # Willow thinks in systems, feedback loops, and structural integrity.
 # ---------------------------------------------------------------------------
 
-ANALOGY_POOL: Final[list[str]] = [
+_ANALOGY_POOL_FALLBACK: Final[list[str]] = [
     "Same principle as a load-bearing wall — remove it and the whole structure shifts.",
     "Think of it like signal attenuation: the further from the source, the more noise you get.",
     "It's a feedback loop — the output feeds back into the input and amplifies the pattern.",
@@ -95,10 +118,19 @@ ANALOGY_POOL: Final[list[str]] = [
     "It's the difference between a foundation and a facade. One holds weight.",
     "Like impedance matching — the signal only transfers cleanly when both sides are tuned.",
 ]
+_ANALOGY_CADENCE_FALLBACK: Final[int] = 3
 
-# Analogy injection frequency: inject every Nth high_m turn, not every turn.
-# Prevents fortune-cookie fatigue while keeping the voice distinctive.
-_ANALOGY_INJECTION_CADENCE: Final[int] = 3
+
+def _get_analogy_pool() -> list[str]:
+    """Return analogy list from willow_persona.json, falling back to hardcoded."""
+    pool = _load_persona().get("analogy_pool", {})
+    return pool.get("analogies", _ANALOGY_POOL_FALLBACK)
+
+
+def _get_analogy_cadence() -> int:
+    """Return analogy injection cadence from willow_persona.json."""
+    pool = _load_persona().get("analogy_pool", {})
+    return int(pool.get("cadence", _ANALOGY_CADENCE_FALLBACK))
 
 
 # ---------------------------------------------------------------------------
@@ -153,7 +185,7 @@ def get_response_style(
 
     if m_range == "high_m":
         # Inject analogy only on every Nth high_m turn
-        eligible_for_analogy = (turn_id % _ANALOGY_INJECTION_CADENCE) == 0
+        eligible_for_analogy = (turn_id % _get_analogy_cadence()) == 0
         return ResponseStyle(
             max_sentences=4,
             use_analogy=eligible_for_analogy,
@@ -164,7 +196,11 @@ def get_response_style(
                 "Use analogies from architecture, physics, or systems — they should clarify, not decorate. "
                 "You may take up to 4 sentences. Riff a little. Show genuine curiosity. "
                 "React before you answer — a brief 'Interesting.' or 'Hm.' when something lands. "
-                "This is the version of you people remember. Be present."
+                "This is the version of you people remember. Be present. "
+                "[VOCAL DELIVERY: Speak fluidly and with intellectual curiosity. "
+                "Maintain your natural range but do not raise your pitch for emphasis. "
+                "Ground your warmth in logic. Use em-dashes for natural pivots. "
+                "Ban exclamation points.]"
             ),
         )
     elif m_range == "neutral_m":
@@ -177,7 +213,9 @@ def get_response_style(
                 "2-3 sentences. Clear and direct. "
                 "Professional warmth — present but not expressive. "
                 "No analogies unless genuinely necessary. No wit. "
-                "Hold your ground. Don't push."
+                "Hold your ground. Don't push. "
+                "[VOCAL DELIVERY: Clear, professional, balanced. Flat even pitch. "
+                "No emotional inflection. Direct delivery with zero hedging.]"
             ),
         )
     else:  # low_m
@@ -187,13 +225,18 @@ def get_response_style(
             opener=opener,
             system_directive=(
                 "CURRENT MODE: Dignity Floor. "
-                "1-2 sentences maximum. Language is formal. Sentences are short. "
+                "HARD LIMIT: 20 words maximum. No exceptions. "
+                "1-2 sentences. Language is formal. Sentences are short. "
                 "You are pulling back. This must be felt in the register, not just the length. "
                 "Do not elaborate. Do not soften. Do not use analogies or wit. "
                 "If the premise is flawed, say so once and stop. "
                 "The person across from you needs to change their approach — not their words. Their approach. "
                 "Example register: 'I understand the question. The premise is flawed and I'm not going to defend a contradiction.' "
-                "No more than that. Do not omit safety-critical information."
+                "No more than that. Do not omit safety-critical information. "
+                "[VOCAL DELIVERY: Speak significantly slower and softer than normal. "
+                "Flat absolute affect. Pause between each sentence. "
+                "Zero aggression — only cold precision. Full stops only. "
+                "Ban exclamation points. Ban commas.]"
             ),
         )
 
@@ -226,10 +269,11 @@ def apply_behavioral_tells(
 
     m_range = get_m_range(current_m)
 
-    if m_range == "high_m" and (turn_id % _ANALOGY_INJECTION_CADENCE) == 0:
+    if m_range == "high_m" and (turn_id % _get_analogy_cadence()) == 0:
         # Cycle through analogies using turn_id as seed
-        analogy_idx = _cycle_index(str(turn_id), len(ANALOGY_POOL))
-        analogy = ANALOGY_POOL[analogy_idx]
+        pool = _get_analogy_pool()
+        analogy_idx = _cycle_index(str(turn_id), len(pool))
+        analogy = pool[analogy_idx]
         if not response.rstrip().endswith((".", "!", "?")):
             response = response.rstrip() + "."
         return f"{response} {analogy}"
@@ -266,7 +310,8 @@ def select_opener(
 
 def _select_opener(m_range: MRange, seed: str) -> str:
     """Internal: pick opener from pool using hash-based cycling."""
-    pool = OPENERS[m_range]
+    openers = _get_openers()
+    pool = openers.get(m_range, _OPENERS_FALLBACK.get(m_range, ["Okay."]))
     if not seed:
         return pool[0]
     return pool[_cycle_index(seed, len(pool))]
@@ -281,7 +326,7 @@ def _select_opener(m_range: MRange, seed: str) -> str:
 # Per Constitution Principle I: "never cold, never a pushover."
 # ---------------------------------------------------------------------------
 
-TROLL_DEFENSE_BOUNDARY_STATEMENT: Final[str] = (
+_TROLL_DEFENSE_FALLBACK: Final[str] = (
     "I've noticed a pattern here, and I'm going to be direct about it. "
     "This conversation has moved into territory I won't follow. "
     "When you're ready to engage differently, I'm here."
@@ -292,10 +337,7 @@ def get_troll_defense_response() -> str:
     """
     Return the boundary statement for Troll Defense activation (T045, US4).
 
-    Called by main.py when troll_defense_active=True. Willow stops engaging
-    the attack vector and returns this fixed response instead.
-
-    Returns:
-        The Troll Defense boundary statement string.
+    Loaded from willow_persona.json troll_defense.statement.
+    Falls back to hardcoded string if JSON unavailable.
     """
-    return TROLL_DEFENSE_BOUNDARY_STATEMENT
+    return _load_persona().get("troll_defense", {}).get("statement", _TROLL_DEFENSE_FALLBACK)

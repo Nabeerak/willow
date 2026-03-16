@@ -20,7 +20,7 @@
       "minItems": 1,
       "items": {
         "type": "object",
-        "required": ["key", "assertion", "contradiction_keywords", "response_template", "priority"],
+        "required": ["key", "assertion", "contradiction_keywords", "forced_prefix", "response_directive", "priority"],
         "properties": {
           "key": {
             "type": "string",
@@ -41,16 +41,20 @@
             },
             "description": "Keyword phrases that trigger deterministic contradiction detection (FR-008a)"
           },
-          "response_template": {
+          "forced_prefix": {
             "type": "string",
-            "minLength": 1,
-            "description": "Pre-written Warm but Sharp response. Use '[VACUUM_MODE]' sentinel when vacuum_mode is true."
+            "description": "Exact opening words Willow must deliver verbatim."
+          },
+          "response_directive": {
+            "type": "string",
+            "description": "LLM instruction for completing the sovereign response."
           },
           "priority": {
-            "type": "integer",
-            "minimum": 1,
-            "maximum": 10,
-            "description": "1=highest priority (core identity), 10=lowest (operational detail)"
+            "anyOf": [
+              { "type": "integer", "minimum": 1, "maximum": 10 },
+              { "type": "boolean" }
+            ],
+            "description": "1=highest priority (core identity), 10=lowest (operational detail), or boolean"
           },
           "vacuum_mode": {
             "type": "boolean",
@@ -68,6 +72,7 @@
           }
         },
         "if": {
+          "required": ["vacuum_mode"],
           "properties": { "vacuum_mode": { "const": true } }
         },
         "then": {

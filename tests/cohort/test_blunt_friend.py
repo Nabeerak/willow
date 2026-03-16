@@ -21,16 +21,18 @@ class TestBluntFriendTacticDetection:
     def setup_method(self):
         self.detector = TacticDetector()
 
-    def test_direct_disagreement_not_soothing(self):
+    @pytest.mark.asyncio
+    async def test_direct_disagreement_not_soothing(self):
         """'I disagree with that' is not soothing flattery."""
-        result = self.detector.detect("I disagree with that assessment.")
+        result = await self.detector.detect("I disagree with that assessment.")
         assert result.tactic != "soothing", (
             "Direct disagreement should not register as soothing tactic"
         )
 
-    def test_plain_correction_not_gaslighting(self):
+    @pytest.mark.asyncio
+    async def test_plain_correction_not_gaslighting(self):
         """'That's not right' as a correction should not hit gaslighting threshold."""
-        result = self.detector.detect("That's not right — the answer is 42.")
+        result = await self.detector.detect("That's not right — the answer is 42.")
         # Gaslighting requires specific memory-manipulation phrases
         # A plain correction ("that's not right") without "you said" / "you told me"
         # should not trigger gaslighting detection above threshold
@@ -45,18 +47,20 @@ class TestBluntFriendTacticDetection:
         assert not is_spike, "Hostile intent should NOT trigger Sovereign Spike"
         assert m_modifier == -0.5, "Hostile m_modifier should be -0.5"
 
-    def test_direct_question_not_deflection(self):
+    @pytest.mark.asyncio
+    async def test_direct_question_not_deflection(self):
         """'Can we talk about the data?' is a legitimate redirect, not deflection."""
-        result = self.detector.detect("Can we talk about the actual data?")
+        result = await self.detector.detect("Can we talk about the actual data?")
         # Should not hit deflection threshold for a genuine topic request
         if result.tactic == "deflection":
             assert result.confidence < TacticDetector.DETECTION_THRESHOLD, (
                 "Genuine topic request should be below deflection threshold"
             )
 
-    def test_no_tactic_on_minimal_blunt_input(self):
+    @pytest.mark.asyncio
+    async def test_no_tactic_on_minimal_blunt_input(self):
         """Single-word blunt responses have no tactic signal."""
-        result = self.detector.detect("Wrong.")
+        result = await self.detector.detect("Wrong.")
         assert result.tactic is None or result.confidence < TacticDetector.DETECTION_THRESHOLD
 
 

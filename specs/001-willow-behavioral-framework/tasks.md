@@ -185,7 +185,7 @@
 - [x] T078 [P] Implement 200ms interruption cooldown in src/voice/interruption_handler.py — add `_cooldown_until: Optional[float]` field; after agent audio ends, suppress interruption detection for 200ms (FR-023)
 - [x] T067 Run pytest on all tests (tests/cohort/, tests/integration/, tests/unit/) and achieve 90% tactic detection accuracy
 - [x] T068 Run tier latency benchmarks (scripts/benchmark_tiers.py) and verify all tiers meet budgets (T1 <50ms, T2 <5ms, T3 <500ms, T4 <2s)
-- [ ] T069 Deploy to Google Cloud Run using cloudbuild.yaml and verify service availability
+- [x] T069 Deploy to Google Cloud Run using cloudbuild.yaml and verify service availability
 
 ---
 

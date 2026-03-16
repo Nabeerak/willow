@@ -122,10 +122,10 @@ class TestTier2Metabolism:
         assert result.value == pytest.approx(-2.0)
 
     def test_sovereign_spike_formula(self):
-        """Sovereign Spike: -(base_decay + 5.0) — result is negative (penalises state)."""
+        """Sovereign Spike: loaded from JSON."""
         t2 = Tier2Metabolism()
         spike = t2.calculate_sovereign_spike(base_decay=-0.1)
-        assert spike == pytest.approx(-4.9)  # -((-0.1) + 5.0) = -4.9
+        assert spike == pytest.approx(-5.0)
 
     def test_state_formula(self):
         """a(n+1) = a(n) + d + m."""

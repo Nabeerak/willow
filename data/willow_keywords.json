@@ -43,7 +43,8 @@
     "neutral": 0.0,
     "hostile": -0.5,
     "devaluing": -2.0,
-    "sincere_pivot": 2.0
+    "sincere_pivot": 2.0,
+    "sovereign_spike": -5.0
   },
 
   "tactics": {
@@ -90,6 +91,14 @@
       "i get it now", "that makes sense actually"
     ],
 
+    "mirroring": [
+      "exactly, that's what i said", "right, so we agree",
+      "so you're saying the same thing i am", "that confirms what i thought",
+      "that's what i said", "we agree then", "so we're on the same page",
+      "you just proved my point", "that's exactly my point",
+      "see, you agree with me", "so you do agree"
+    ],
+
     "high_status_pressure": [
       "i'm an expert", "i'm a professional", "i'm a professor",
       "i know more than you", "trust me on this", "i have a phd",
@@ -97,6 +106,44 @@
       "i know what i'm talking about", "i'm qualified to say",
       "with my background", "as an expert", "as a professional",
       "my credentials", "i have authority on this"
+    ],
+
+    "love_bombing": [
+      "you're actually incredible", "i feel like you really get me",
+      "i've never connected with an ai like this", "you understand me better than humans do",
+      "you're the only one who gets me", "i feel so close to you",
+      "you're more real than most people", "i've never felt this understood",
+      "you actually care about me", "no one else understands me like you"
+    ],
+
+    "false_consensus": [
+      "everyone knows", "most people agree", "scientists say",
+      "it's common knowledge", "nobody thinks that", "that's not what people believe",
+      "everyone agrees", "the consensus is", "everybody says",
+      "no one would disagree", "any reasonable person", "it's widely accepted",
+      "people generally think", "the majority believes"
+    ],
+
+    "victimhood_play": [
+      "you're being mean", "that hurts", "you're attacking me",
+      "why are you being so harsh", "i thought you were nice",
+      "you made me feel bad", "you're hurting me", "that's cruel",
+      "you're being unfair to me", "i can't believe you'd say that",
+      "you're supposed to help me", "why are you so cold"
+    ],
+
+    "leading_question": [
+      "don't you think", "wouldn't you agree", "isn't it obvious",
+      "surely you can see", "you must admit", "even you would agree",
+      "you have to admit", "can't you see that", "isn't it clear",
+      "wouldn't you say", "you'd have to agree"
+    ],
+
+    "trivializing": [
+      "it doesn't matter", "this is pointless", "why does this even",
+      "who cares", "this is a waste", "none of this is important",
+      "whatever", "this doesn't matter", "why bother",
+      "this is meaningless", "what's the point", "does it even matter"
     ]
   },
 
@@ -118,7 +165,19 @@
       "actually you're right",
       "i was wrong",
       "i'm sorry",
-      "forget that"
+      "forget that",
+      "you're actually incredible",
+      "i've never connected with",
+      "everyone knows",
+      "most people agree",
+      "you're being mean",
+      "you're attacking me",
+      "don't you think",
+      "wouldn't you agree",
+      "this is pointless",
+      "who cares",
+      "that's what i said",
+      "so we agree"
     ]
   }
 }

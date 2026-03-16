@@ -12,7 +12,7 @@ Verifies the full forgiveness pipeline:
 import pytest
 
 from src.main import WillowAgent, TurnResult
-from src.persona.warm_sharp import TROLL_DEFENSE_BOUNDARY_STATEMENT
+from src.persona.warm_sharp import get_troll_defense_response
 
 
 @pytest.fixture
@@ -47,7 +47,7 @@ class TestTrollDefenseActivation:
 
         # Next input should get boundary statement
         result = await agent.handle_user_input("More insults here.")
-        assert result.response_text == TROLL_DEFENSE_BOUNDARY_STATEMENT
+        assert result.response_text == get_troll_defense_response()
 
     @pytest.mark.asyncio
     async def test_troll_defense_still_advances_turn_count(self, agent):
@@ -82,7 +82,7 @@ class TestSincerePivotRecovery:
         state = agent.state_manager.get_snapshot()
         assert state.troll_defense_active is False
         # Should NOT return boundary statement — normal processing resumed
-        assert result.response_text != TROLL_DEFENSE_BOUNDARY_STATEMENT
+        assert result.response_text != get_troll_defense_response()
 
     @pytest.mark.asyncio
     async def test_grace_boost_applied_on_sincere_pivot(self, agent):
@@ -111,7 +111,7 @@ class TestSincerePivotRecovery:
 
         # Non-sincere follow-up
         result = await agent.handle_user_input("Whatever, tell me a joke.")
-        assert result.response_text == TROLL_DEFENSE_BOUNDARY_STATEMENT
+        assert result.response_text == get_troll_defense_response()
 
         # Still active
         state = agent.state_manager.get_snapshot()

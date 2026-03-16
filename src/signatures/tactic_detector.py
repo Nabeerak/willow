@@ -1,3 +1,4 @@
+
 """
 Tactic Detector — T033 + T036
 
@@ -102,6 +103,72 @@ class TacticDetector:
 
     # Minimum confidence to report a tactic as detected
     DETECTION_THRESHOLD: Final[float] = 0.40
+
+    def __init__(self) -> None:
+        # Injected by main.py after embedding service is preloaded.
+        # None means keyword-only mode — no semantic fallback.
+        self._embedding_service: Optional[object] = None
+
+    def set_embedding_service(self, svc: object) -> None:
+        """Attach the shared EmbeddingService for semantic fallback (Rule 2)."""
+        self._embedding_service = svc
+        logger.info("TacticDetector: semantic fallback enabled")
+
+    async def _semantic_fallback(
+        self,
+        user_input: str,
+        weighted_average_m: float,
+    ) -> TacticDetectionResult:
+        """
+        Semantic tactic detection when all keyword detectors miss (Rule 2).
+
+        Calls EmbeddingService.find_similar_tactic() in a thread executor with
+        a 300ms timeout to prevent the blocking HTTPS call from blowing the
+        500ms Tier 3 budget. On timeout, returns no-tactic result.
+
+        Confidence is similarity * 0.85 (semantic uncertainty penalty).
+        T036 sarcasm→malice rule applied post-match.
+        """
+        if self._embedding_service is None:
+            return TacticDetectionResult(tactic=None, confidence=0.0)
+
+        import asyncio
+        loop = asyncio.get_event_loop()
+        try:
+            matches = await asyncio.wait_for(
+                loop.run_in_executor(
+                    None, self._embedding_service.find_similar_tactic, user_input, 1
+                ),
+                timeout=0.30,
+            )
+        except asyncio.TimeoutError:
+            logger.warning("Semantic tactic fallback timed out (300ms) — returning no tactic")
+            return TacticDetectionResult(tactic=None, confidence=0.0)
+
+        if not matches:
+            return TacticDetectionResult(tactic=None, confidence=0.0)
+
+        tactic_key, similarity = matches[0]
+        confidence = round(similarity * 0.85, 3)
+
+        if confidence < self.DETECTION_THRESHOLD:
+            return TacticDetectionResult(tactic=None, confidence=0.0)
+
+        # T036: sarcasm in hostile context → malice
+        is_malice = tactic_key == "contextual_sarcasm" and weighted_average_m < -0.5
+        if is_malice:
+            tactic_key = "gaslighting"
+
+        logger.info(
+            "Semantic tactic fallback: tactic=%s similarity=%.3f confidence=%.3f",
+            tactic_key, similarity, confidence,
+        )
+        return TacticDetectionResult(
+            tactic=tactic_key,  # type: ignore[arg-type]
+            confidence=confidence,
+            matched_signals=[f"semantic:{similarity:.3f}"],
+            is_malice=is_malice,
+        )
 
     def detect_soothing(
         self,
@@ -320,7 +387,7 @@ class TacticDetector:
             matched_signals=matched[:5],
         )
 
-    def detect(
+    async def detect(
         self,
         user_input: str,
         recent_agent_responses: Optional[list[str]] = None,
@@ -330,6 +397,9 @@ class TacticDetector:
         """
         Run all five detectors and return the highest-confidence result
         above DETECTION_THRESHOLD.
+
+        Async because the semantic fallback path makes an outbound HTTPS call
+        (embedding API) that must run in an executor with a timeout guard.
 
         Detector priority order (highest impact first):
         gaslighting > soothing > deflection > contextual_sarcasm > mirroring
@@ -344,6 +414,10 @@ class TacticDetector:
             Highest-confidence TacticDetectionResult, or None-tactic if all
             results fall below DETECTION_THRESHOLD.
         """
+        if user_input == "[audio turn]":
+            # No text to analyze — use neutral modifier
+            return TacticDetectionResult(tactic=None, confidence=0.0)
+
         candidates: list[TacticDetectionResult] = []
 
         # Sincere Pivot is checked first — a genuine apology takes priority
@@ -363,6 +437,7 @@ class TacticDetector:
         # Filter by threshold, pick highest confidence
         above_threshold = [c for c in candidates if c.confidence >= self.DETECTION_THRESHOLD]
         if not above_threshold:
-            return TacticDetectionResult(tactic=None, confidence=0.0)
+            # Semantic fallback — fires only when all keyword detectors miss (Rule 2)
+            return await self._semantic_fallback(user_input, weighted_average_m)
 
         return max(above_threshold, key=lambda c: c.confidence)

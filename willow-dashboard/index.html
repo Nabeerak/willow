@@ -110,7 +110,7 @@
       </div>
 
       <!-- Header -->
-      <header class="relative flex justify-between items-center shrink-0 px-4 h-16">
+      <header class="relative flex justify-between items-center shrink-0 px-4 h-[12vh]">
         <!-- Logo -->
         <div class="flex items-center gap-3 z-10">
           <div class="w-10 h-10 relative">
@@ -153,8 +153,8 @@
           <span class="text-2xl font-light tracking-wide text-white">Willow <span class="font-normal text-white">Agent</span></span>
         </div>
 
-        <!-- Status Pill (Centered) -->
-        <div class="hidden md:flex absolute left-1/2 top-1/2 transform -translate-x-1/2 -translate-y-1/2 items-center gap-6 glass-pill px-6 py-2.5 bg-[#111625] border border-white/10 z-10">
+        <!-- Status Pill -->
+        <div class="hidden md:flex items-center gap-6 glass-pill px-6 py-2.5 bg-[#111625] border border-white/10 z-10">
           <div class="flex items-center gap-2">
             <span class="text-sm text-gray-400">WebSocket:</span>
             <span id="ws-status-text" class="text-sm text-green-400 font-medium">Connected</span>
@@ -181,360 +181,204 @@
       <!-- Toast Container -->
       <div id="toast-container" class="fixed top-4 right-4 z-50 flex flex-col gap-2 pointer-events-none"></div>
 
-      <!-- Main Grid Layout -->
-      <main class="flex-1 grid grid-cols-1 lg:grid-cols-12 gap-4 min-h-0 relative">
+      <!-- Main Layout -->
+      <main class="flex-1 flex flex-col gap-4 min-h-0 relative overflow-y-auto scrollbar-hide pb-4">
         
-        <!-- Left Sidebar: Behavioral State -->
-        <aside id="sidebar-left" class="glass-panel lg:col-span-3 flex flex-col p-6 gap-6 transform -translate-x-full lg:translate-x-0 transition-transform duration-300 fixed inset-y-0 left-0 w-80 z-40 lg:static lg:w-auto lg:inset-auto bg-[#0B0F1A] lg:bg-transparent lg:h-full lg:overflow-y-auto scrollbar-hide">
+        <!-- Top Section: Mic Panel and Right Panel -->
+        <div class="grid grid-cols-1 lg:grid-cols-8 gap-4 shrink-0" style="height: 55vh;">
           
-          <!-- Mobile Session Stats (Visible only on mobile) -->
-          <div class="lg:hidden flex flex-col gap-3 pb-6 border-b border-white/5">
-            <h3 class="text-sm font-medium text-white">Session Stats</h3>
-            <div class="grid grid-cols-2 gap-3">
-              <div class="p-3 bg-[#1A2030] rounded-lg border border-white/5">
-                <div class="text-[10px] text-gray-400 mb-1 uppercase tracking-wider">Duration</div>
-                <div id="mobile-session-timer" class="text-lg font-mono text-white">00:00</div>
-              </div>
-              <div class="p-3 bg-[#1A2030] rounded-lg border border-white/5">
-                <div class="text-[10px] text-gray-400 mb-1 uppercase tracking-wider">Turns</div>
-                <div id="mobile-turn-counter" class="text-lg font-mono text-white">0</div>
+          <!-- Mic & Transcript Panel -->
+          <section class="glass-panel lg:col-span-5 flex flex-col relative overflow-hidden h-full">
+            <!-- Header -->
+            <div class="p-4 lg:p-6 pb-2 border-b border-white/5 flex justify-between items-center shrink-0">
+              <h3 class="text-sm font-medium text-white">Transcript</h3>
+              <!-- Session Status Badge -->
+              <div id="session-status-badge" class="px-3 py-1 rounded-full bg-white/5 border border-white/10 text-[10px] font-mono uppercase tracking-wider text-gray-400 transition-colors duration-300">
+                Idle
               </div>
             </div>
-          </div>
 
-          <div class="flex flex-col gap-1 shrink-0">
-            <h3 class="text-sm font-medium text-white">Behavioral State</h3>
-            <p class="text-xs text-gray-500">M-Modifier</p>
-          </div>
-          
-          <div class="flex-1 flex items-center justify-center gap-8 min-h-[160px]">
-            <!-- Vertical Meter -->
-            <div class="h-32 lg:h-40 w-2 bg-white/5 rounded-full relative overflow-hidden flex flex-col justify-between py-1">
-               <!-- Ticks -->
-               <div class="w-full h-px bg-white/20"></div>
-               <div class="w-full h-px bg-white/20"></div>
-               <div class="w-full h-px bg-white/20"></div>
-               <div class="w-full h-px bg-white/20"></div>
-               <div class="w-full h-px bg-white/20"></div>
-               <div class="w-full h-px bg-white/20"></div>
-               <div class="w-full h-px bg-white/20"></div>
-               <div class="w-full h-px bg-white/20"></div>
-               <div class="w-full h-px bg-white/20"></div>
-               
-               <!-- Fill -->
-               <div id="m-modifier-meter" class="absolute bottom-0 left-0 w-full bg-blue-500 rounded-full transition-all duration-500" style="height: 60%"></div>
-            </div>
-
-            <!-- Main Slider -->
-            <div id="m-modifier-slider" class="h-32 lg:h-40 w-12 bg-[#1A2030] rounded-lg relative border border-white/5 p-1 cursor-pointer touch-none group">
-              <div class="w-full h-full bg-black/20 rounded relative overflow-hidden pointer-events-none">
-                <div id="m-modifier-fill" class="absolute bottom-0 left-0 w-full slider-track transition-all duration-300 group-active:duration-0" style="height: 60%"></div>
+            <!-- Transcript Area -->
+            <div class="flex-1 overflow-y-auto p-4 lg:p-6 scrollbar-hide relative mask-gradient-y min-h-0">
+              <div id="transcript-container" class="flex flex-col gap-6 pt-4 pb-12">
+                <!-- Messages -->
+                <div class="flex flex-col gap-1 opacity-60">
+                  <span class="text-xs text-gray-500 font-mono">Willow:</span>
+                  <p class="text-base font-light text-gray-300 leading-relaxed">Ready to begin session.</p>
+                </div>
               </div>
-              <!-- Handle -->
-              <div id="m-modifier-handle" class="absolute left-1/2 transform -translate-x-1/2 w-14 h-6 bg-white/10 backdrop-blur-md border border-white/40 rounded-full shadow-lg transition-all duration-300 group-active:duration-0 pointer-events-none" style="bottom: calc(60% - 12px)"></div>
               
-              <div class="absolute top-1/2 -left-8 transform -translate-y-1/2 text-xs font-mono text-gray-400 pointer-events-none">0</div>
-            </div>
-          </div>
-
-          <!-- Badges -->
-          <div class="flex flex-col gap-3 mt-auto shrink-0">
-            <div id="badge-cold-start" class="flex items-center justify-between px-4 py-3 rounded-xl bg-[#1A2030] border border-white/5 opacity-50 transition-all duration-300">
-              <div class="flex items-center gap-2">
-                <span class="text-yellow-500">❄</span>
-                <span class="text-xs text-gray-300 font-medium">Cold Start</span>
-              </div>
-              <div class="w-2 h-2 rounded-full bg-green-500"></div>
-            </div>
-            <div id="badge-troll-defense" class="flex items-center justify-between px-4 py-3 rounded-xl bg-[#1A2030] border border-white/5 opacity-50 transition-all duration-300">
-               <div class="flex items-center gap-2">
-                <span class="text-green-500">🛡</span>
-                <span class="text-xs text-gray-300 font-medium">Troll Defense Active</span>
-              </div>
-              <div class="w-2 h-2 rounded-full bg-green-500"></div>
-            </div>
-          </div>
-        </aside>
-
-        <!-- Center Panel: Transcript & Mic -->
-        <section class="glass-panel lg:col-span-6 flex flex-col relative overflow-hidden h-full max-h-full">
-          <!-- Header -->
-          <div class="p-4 lg:p-6 pb-2 border-b border-white/5 flex justify-between items-center shrink-0">
-            <h3 class="text-sm font-medium text-white">Transcript</h3>
-            <!-- Session Status Badge -->
-            <div id="session-status-badge" class="px-3 py-1 rounded-full bg-white/5 border border-white/10 text-[10px] font-mono uppercase tracking-wider text-gray-400 transition-colors duration-300">
-              Idle
-            </div>
-          </div>
-
-          <!-- Transcript Area -->
-          <div class="flex-1 overflow-y-auto p-4 lg:p-6 scrollbar-hide relative mask-gradient-y min-h-0">
-            <div id="transcript-container" class="flex flex-col gap-6 pt-4 pb-12">
-              <!-- Messages -->
-              <div class="flex flex-col gap-1 opacity-60">
-                <span class="text-xs text-gray-500 font-mono">Willow:</span>
-                <p class="text-base font-light text-gray-300 leading-relaxed">Ready to begin session.</p>
+              <!-- Interruption Ripple (Visual Only for now) -->
+              <div id="interruption-indicator" class="absolute top-1/2 right-4 lg:right-10 transform -translate-y-1/2 pointer-events-none opacity-0 transition-opacity duration-300 flex items-center gap-4">
+                 <span class="text-xs text-gray-400 font-mono hidden sm:inline">Interruption Detected</span>
+                 <div class="relative">
+                   <div class="w-2 h-2 bg-blue-500 rounded-full"></div>
+                   <div class="absolute inset-0 w-full h-full border border-blue-500 rounded-full animate-[ping_1.5s_infinite]"></div>
+                   <div class="absolute inset-[-4px] w-[calc(100%+8px)] h-[calc(100%+8px)] border border-blue-500/50 rounded-full animate-[ping_1.5s_infinite_0.2s]"></div>
+                 </div>
+                 <svg class="w-8 h-8 lg:w-12 lg:h-12 text-gray-600 transform rotate-180" viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M3 12h18M3 12l6-6M3 12l6 6" stroke-width="1"/></svg>
               </div>
             </div>
-            
-            <!-- Interruption Ripple (Visual Only for now) -->
-            <div id="interruption-indicator" class="absolute top-1/2 right-4 lg:right-10 transform -translate-y-1/2 pointer-events-none opacity-0 transition-opacity duration-300 flex items-center gap-4">
-               <span class="text-xs text-gray-400 font-mono hidden sm:inline">Interruption Detected</span>
-               <div class="relative">
-                 <div class="w-2 h-2 bg-blue-500 rounded-full"></div>
-                 <div class="absolute inset-0 w-full h-full border border-blue-500 rounded-full animate-[ping_1.5s_infinite]"></div>
-                 <div class="absolute inset-[-4px] w-[calc(100%+8px)] h-[calc(100%+8px)] border border-blue-500/50 rounded-full animate-[ping_1.5s_infinite_0.2s]"></div>
-               </div>
-               <svg class="w-8 h-8 lg:w-12 lg:h-12 text-gray-600 transform rotate-180" viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M3 12h18M3 12l6-6M3 12l6 6" stroke-width="1"/></svg>
-            </div>
-          </div>
 
-          <!-- Mic & Visualizer Area -->
-          <div class="relative p-4 lg:p-6 pt-0 mt-auto flex flex-col items-center justify-end shrink-0">
-            
-            <!-- Thinking Status -->
-            <div id="thinking-status" class="absolute top-4 left-4 lg:top-10 lg:left-10 opacity-0 transition-opacity duration-300 flex items-center gap-2">
-              <div class="flex space-x-1">
-                <div class="w-1 h-1 bg-blue-400 rounded-full animate-bounce"></div>
-                <div class="w-1 h-1 bg-blue-400 rounded-full animate-bounce delay-100"></div>
-                <div class="w-1 h-1 bg-blue-400 rounded-full animate-bounce delay-200"></div>
+            <!-- Mic & Visualizer Area -->
+            <div class="relative p-4 lg:p-6 pt-0 mt-auto flex flex-col items-center justify-end shrink-0">
+              
+              <!-- Thinking Status -->
+              <div id="thinking-status" class="absolute top-4 left-4 lg:top-10 lg:left-10 opacity-0 transition-opacity duration-300 flex items-center gap-2">
+                <div class="flex space-x-1">
+                  <div class="w-1 h-1 bg-blue-400 rounded-full animate-bounce"></div>
+                  <div class="w-1 h-1 bg-blue-400 rounded-full animate-bounce delay-100"></div>
+                  <div class="w-1 h-1 bg-blue-400 rounded-full animate-bounce delay-200"></div>
+                </div>
+                <span class="text-xs font-mono text-blue-400">Thinking...</span>
               </div>
-              <span class="text-xs font-mono text-blue-400">Thinking...</span>
-            </div>
 
-            <!-- Mic Button -->
-            <div class="relative z-10 mb-4 lg:mb-8">
-               <!-- Pre-flight Badge -->
-               <div id="preflight-timer" class="absolute top-1/2 left-full ml-4 lg:ml-6 transform -translate-y-1/2 flex items-center gap-2 px-3 py-1.5 rounded-full bg-[#1A2030] border border-red-500/30 text-red-400 opacity-0 transition-opacity duration-300 whitespace-nowrap z-20">
-                 <svg class="w-3 h-3 animate-spin" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83"/></svg>
-                 <span class="text-xs font-mono">Pre-flight: <span id="preflight-count">3</span>s</span>
-               </div>
+              <!-- Mic Button -->
+              <div class="relative z-10 mb-4 lg:mb-8">
+                 <!-- Pre-flight Badge -->
+                 <div id="preflight-timer" class="absolute top-1/2 left-full ml-4 lg:ml-6 transform -translate-y-1/2 flex items-center gap-2 px-3 py-1.5 rounded-full bg-[#1A2030] border border-red-500/30 text-red-400 opacity-0 transition-opacity duration-300 whitespace-nowrap z-20">
+                   <svg class="w-3 h-3 animate-spin" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83"/></svg>
+                   <span class="text-xs font-mono">Pre-flight: <span id="preflight-count">3</span>s</span>
+                 </div>
 
-               <!-- Button -->
-               <button id="mic-btn" class="group relative w-20 h-20 lg:w-24 lg:h-24 rounded-full bg-gradient-to-b from-[#2A3040] to-[#0B0F1A] border border-white/10 shadow-[0_0_40px_rgba(59,130,246,0.1)] flex items-center justify-center transition-all duration-300 hover:scale-105 active:scale-95">
-                 <!-- Glow Ring -->
-                 <div class="absolute inset-[-4px] rounded-full border border-blue-500/30 opacity-0 group-hover:opacity-100 transition-opacity duration-500"></div>
-                 <div class="absolute inset-[-12px] rounded-full border border-blue-500/10 opacity-0 group-hover:opacity-100 transition-opacity duration-500"></div>
+                 <!-- Button -->
+                 <button id="mic-btn" class="group relative w-20 h-20 lg:w-24 lg:h-24 rounded-full bg-gradient-to-b from-[#2A3040] to-[#0B0F1A] border border-white/10 shadow-[0_0_40px_rgba(59,130,246,0.1)] flex items-center justify-center transition-all duration-300 hover:scale-105 active:scale-95">
+                   <!-- Glow Ring -->
+                   <div class="absolute inset-[-4px] rounded-full border border-blue-500/30 opacity-0 group-hover:opacity-100 transition-opacity duration-500"></div>
+                   <div class="absolute inset-[-12px] rounded-full border border-blue-500/10 opacity-0 group-hover:opacity-100 transition-opacity duration-500"></div>
+                   
+                   <!-- Icon -->
+                   <svg id="mic-icon" class="w-6 h-6 lg:w-8 lg:h-8 text-white transition-all duration-300" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor">
+                     <path d="M12 14c1.66 0 3-1.34 3-3V5c0-1.66-1.34-3-3-3S9 3.34 9 5v6c0 1.66 1.34 3 3 3z"/>
+                     <path d="M17 11c0 2.76-2.24 5-5 5s-5-2.24-5-5H5c0 3.53 2.61 6.43 6 6.92V21h2v-3.08c3.39-.49 6-3.39 6-6.92h-2z"/>
+                   </svg>
+
+                   <!-- Progress Ring -->
+                   <svg class="absolute inset-0 w-full h-full rotate-[-90deg] pointer-events-none">
+                     <circle id="mic-progress" cx="50%" cy="50%" r="46%" fill="none" stroke="#3b82f6" stroke-width="2" stroke-dasharray="289" stroke-dashoffset="289" class="transition-all duration-[3000ms] ease-linear" />
+                   </svg>
+                 </button>
                  
-                 <!-- Icon -->
-                 <svg id="mic-icon" class="w-6 h-6 lg:w-8 lg:h-8 text-white transition-all duration-300" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor">
-                   <path d="M12 14c1.66 0 3-1.34 3-3V5c0-1.66-1.34-3-3-3S9 3.34 9 5v6c0 1.66 1.34 3 3 3z"/>
-                   <path d="M17 11c0 2.76-2.24 5-5 5s-5-2.24-5-5H5c0 3.53 2.61 6.43 6 6.92V21h2v-3.08c3.39-.49 6-3.39 6-6.92h-2z"/>
-                 </svg>
+                 <div class="absolute top-1/2 right-full mr-4 lg:mr-6 transform -translate-y-1/2 px-3 py-1.5 rounded-full bg-[#1A2030] border border-white/5 text-gray-400 text-xs whitespace-nowrap hidden sm:block">
+                   Mic Button
+                 </div>
+              </div>
 
-                 <!-- Progress Ring -->
-                 <svg class="absolute inset-0 w-full h-full rotate-[-90deg] pointer-events-none">
-                   <circle id="mic-progress" cx="50%" cy="50%" r="46%" fill="none" stroke="#3b82f6" stroke-width="2" stroke-dasharray="289" stroke-dashoffset="289" class="transition-all duration-[3000ms] ease-linear" />
-                 </svg>
-               </button>
-               
-               <div class="absolute top-1/2 right-full mr-4 lg:mr-6 transform -translate-y-1/2 px-3 py-1.5 rounded-full bg-[#1A2030] border border-white/5 text-gray-400 text-xs whitespace-nowrap hidden sm:block">
-                 Mic Button
-               </div>
+              <!-- Visualizer -->
+              <div class="w-full h-12 lg:h-16 relative flex items-end gap-0.5 opacity-80">
+                <canvas id="audio-visualizer" class="w-full h-full"></canvas>
+                
+                <!-- Threshold Line -->
+                <div class="absolute bottom-[20%] left-0 w-full h-px bg-red-500/30 border-t border-dashed border-red-500/50"></div>
+                <div class="absolute left-0 bottom-[20%] transform -translate-y-1/2 text-[10px] font-mono text-red-400/50 px-1 bg-[#0B0F1A]/50">RMS -50dB</div>
+                
+                <!-- Noise Gate Indicator -->
+                <div id="noise-gate-indicator" class="absolute right-[20%] top-0 h-full w-px bg-cyan-500/50 flex flex-col items-center opacity-0 transition-opacity duration-200">
+                   <div class="w-2 h-2 bg-cyan-500 rounded-full shadow-[0_0_10px_rgba(6,182,212,0.8)]"></div>
+                   <div class="mt-auto mb-2 text-[10px] font-mono text-cyan-400 whitespace-nowrap bg-[#0B0F1A]/80 px-1 rounded">Gate Active</div>
+                </div>
+              </div>
+              <div class="w-full flex justify-between text-[10px] text-gray-600 font-mono mt-2 uppercase tracking-wider">
+                <span>Microphone Level</span>
+                <span>Noise Gate Active</span>
+              </div>
+
             </div>
+          </section>
 
-            <!-- Visualizer -->
-            <div class="w-full h-12 lg:h-16 relative flex items-end gap-0.5 opacity-80">
-              <canvas id="audio-visualizer" class="w-full h-full"></canvas>
-              
-              <!-- Threshold Line -->
-              <div class="absolute bottom-[20%] left-0 w-full h-px bg-red-500/30 border-t border-dashed border-red-500/50"></div>
-              <div class="absolute left-0 bottom-[20%] transform -translate-y-1/2 text-[10px] font-mono text-red-400/50 px-1 bg-[#0B0F1A]/50">RMS -50dB</div>
-              
-              <!-- Noise Gate Indicator -->
-              <div id="noise-gate-indicator" class="absolute right-[20%] top-0 h-full w-px bg-cyan-500/50 flex flex-col items-center opacity-0 transition-opacity duration-200">
-                 <div class="w-2 h-2 bg-cyan-500 rounded-full shadow-[0_0_10px_rgba(6,182,212,0.8)]"></div>
-                 <div class="mt-auto mb-2 text-[10px] font-mono text-cyan-400 whitespace-nowrap bg-[#0B0F1A]/80 px-1 rounded">Gate Active</div>
+          <!-- Right Panel: Plots & Badges -->
+          <aside class="glass-panel flex flex-col p-6 gap-6 lg:col-span-3 h-full overflow-y-auto scrollbar-hide">
+            <div class="space-y-6 flex-1">
+              <div>
+                <div class="text-[10px] text-white/40 uppercase mb-2">Residual Plot</div>
+                <canvas id="dbg-residual-canvas" width="240" height="50" class="w-full rounded border border-white/5 bg-black/20"></canvas>
+                <div class="flex justify-between mt-1"><span class="text-[9px] text-white/40">weighted_avg</span><span id="dbg-weighted-avg-plot" class="text-[9px] text-white/90 font-mono">--</span></div>
+              </div>
+              <div>
+                <div class="text-[10px] text-white/40 uppercase mb-2">Tier Latencies</div>
+                <div class="space-y-1" id="dbg-latencies">
+                  <div class="text-white/30 text-[10px]">Waiting for first turn...</div>
+                </div>
               </div>
             </div>
-            <div class="w-full flex justify-between text-[10px] text-gray-600 font-mono mt-2 uppercase tracking-wider">
-              <span>Microphone Level</span>
-              <span>Noise Gate Active</span>
+
+            <!-- Badges -->
+            <div class="flex flex-col gap-3 mt-auto shrink-0">
+              <div id="badge-cold-start" class="flex items-center justify-between px-4 py-3 rounded-xl bg-[#1A2030] border border-white/5 opacity-50 transition-all duration-300">
+                <div class="flex items-center gap-2">
+                  <span class="text-yellow-500">❄</span>
+                  <span class="text-xs text-gray-300 font-medium">Cold Start</span>
+                </div>
+                <div class="w-2 h-2 rounded-full bg-green-500"></div>
+              </div>
+              <div id="badge-troll-defense" class="flex items-center justify-between px-4 py-3 rounded-xl bg-[#1A2030] border border-white/5 opacity-50 transition-all duration-300">
+                 <div class="flex items-center gap-2">
+                  <span class="text-green-500">🛡</span>
+                  <span class="text-xs text-gray-300 font-medium">Troll Defense Active</span>
+                </div>
+                <div class="w-2 h-2 rounded-full bg-green-500"></div>
+              </div>
+            </div>
+          </aside>
+
+        </div>
+
+        <!-- Bottom Section: Live Behavioral State -->
+        <section class="glass-panel p-6 shrink-0">
+          <div class="flex items-center justify-between mb-6">
+            <h3 class="text-sm font-medium text-white uppercase tracking-widest text-blue-400">Live Behavioral State</h3>
+          </div>
+
+          <div class="grid grid-cols-1 md:grid-cols-3 gap-8">
+            <!-- Behavioral State -->
+            <div class="space-y-4">
+              <h4 class="text-[10px] font-semibold text-white/40 uppercase tracking-widest border-b border-white/5 pb-2">Behavioral State</h4>
+              <div class="space-y-2 text-xs">
+                <div class="flex justify-between"><span class="text-white/40">current_m</span><span id="dbg-current-m" class="text-white/90 font-mono font-semibold">--</span></div>
+                <div class="flex justify-between"><span class="text-white/40">weighted_avg</span><span id="dbg-weighted-avg" class="text-white/90 font-mono">--</span></div>
+                <div class="flex justify-between"><span class="text-white/40">tone_zone</span><span id="dbg-tone-zone" class="font-mono font-semibold">--</span></div>
+                <div class="flex justify-between"><span class="text-white/40">turn_count</span><span id="dbg-turn-count" class="text-white/90 font-mono">0</span></div>
+                <div class="flex justify-between"><span class="text-white/40">cold_start</span><span id="dbg-cold-start" class="text-white/90 font-mono">--</span></div>
+                <div class="flex justify-between"><span class="text-white/40">troll_defense</span><span id="dbg-troll-defense" class="text-white/90 font-mono">--</span></div>
+                <div class="flex justify-between"><span class="text-white/40">spike_count</span><span id="dbg-spike-count" class="text-white/90 font-mono">0</span></div>
+                <div class="flex justify-between"><span class="text-white/40">pitch_hz</span><span id="dbg-pitch-hz" class="text-white/90 font-mono">--</span></div>
+              </div>
+            </div>
+
+            <!-- Thought Signature -->
+            <div class="space-y-4">
+              <h4 class="text-[10px] font-semibold text-purple-400/70 uppercase tracking-widest border-b border-white/5 pb-2">Thought Signature</h4>
+              <div class="space-y-2 text-xs">
+                <div class="flex justify-between"><span class="text-white/40">intent</span><span id="dbg-intent" class="text-white/90 font-mono">--</span></div>
+                <div class="flex justify-between"><span class="text-white/40">tone</span><span id="dbg-tone" class="text-white/90 font-mono">--</span></div>
+                <div class="flex justify-between"><span class="text-white/40">tactic</span><span id="dbg-tactic" class="text-white/90 font-mono">--</span></div>
+                <div class="flex justify-between"><span class="text-white/40">m_modifier</span><span id="dbg-m-modifier" class="text-white/90 font-mono">--</span></div>
+                <div class="flex justify-between"><span class="text-white/40">tier_fired</span><span id="dbg-tier-fired" class="text-white/90 font-mono">--</span></div>
+                <div class="flex justify-between gap-2"><span class="text-white/40 shrink-0">rationale</span><span id="dbg-rationale" class="text-white/60 text-right text-[10px] truncate max-w-[140px]">--</span></div>
+              </div>
+            </div>
+
+            <!-- Tier 4 Sovereign -->
+            <div class="space-y-4">
+              <h4 class="text-[10px] font-semibold text-red-400/70 uppercase tracking-widest border-b border-white/5 pb-2">Tier 4 Sovereign</h4>
+              <div class="space-y-2 text-xs">
+                <div class="flex justify-between"><span class="text-white/40">trigger_key</span><span id="dbg-sovereign-key" class="text-white/90 text-[10px] truncate max-w-[120px] font-mono">--</span></div>
+                <div class="flex justify-between"><span class="text-white/40">gate_1</span><div class="flex items-center"><span id="dbg-gate-1" class="font-mono font-semibold">--</span><span id="dbg-gate-1-detail" class="text-white/40 text-[9px] ml-1"></span></div></div>
+                <div class="flex justify-between"><span class="text-white/40">gate_2</span><div class="flex items-center"><span id="dbg-gate-2" class="font-mono font-semibold">--</span><span id="dbg-gate-2-detail" class="text-white/40 text-[9px] ml-1"></span></div></div>
+                <div class="flex justify-between"><span class="text-white/40">gate_3</span><div class="flex items-center"><span id="dbg-gate-3" class="font-mono font-semibold">--</span><span id="dbg-gate-3-detail" class="text-white/40 text-[9px] ml-1"></span></div></div>
+                <div class="flex justify-between"><span class="text-white/40">conf</span><span id="dbg-transcription-conf" class="text-white/90 font-mono">--</span></div>
+                <div class="flex justify-between"><span class="text-white/40">vacuum</span><span id="dbg-vacuum" class="text-white/90 font-mono">--</span></div>
+                <div class="flex justify-between"><span class="text-white/40">response_src</span><span id="dbg-response-source" class="text-white/90 font-mono">--</span></div>
+              </div>
             </div>
 
           </div>
         </section>
-
-        <!-- Right Sidebar: Performance & Thought Signature -->
-        <aside id="sidebar-right" class="lg:col-span-3 flex flex-col gap-3 transform translate-x-full lg:translate-x-0 transition-transform duration-300 fixed inset-y-0 right-0 w-80 z-40 lg:static lg:w-auto lg:inset-auto bg-[#0B0F1A] lg:bg-transparent lg:h-full lg:overflow-y-auto scrollbar-hide">
-          
-          <!-- Performance Panel -->
-          <div class="glass-panel p-4 flex flex-col gap-4 shrink-0">
-            <div class="flex justify-between items-center">
-              <h3 class="text-sm font-medium text-white">Performance</h3>
-            </div>
-            
-            <!-- Tier Latency (Collapsible) -->
-            <div class="space-y-2">
-              <button id="latency-toggle" class="w-full flex justify-between items-center text-xs text-gray-500 hover:text-gray-300 transition-colors group">
-                <span>Tier Latency</span>
-                <svg id="latency-chevron" class="w-4 h-4 transform transition-transform duration-300 group-hover:text-white" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg>
-              </button>
-              
-              <div id="latency-content" class="space-y-2 overflow-hidden transition-all duration-300 max-h-0 opacity-0">
-                <!-- T1 -->
-                <div class="group">
-                  <div class="flex justify-between text-[10px] font-mono text-gray-400 mb-0.5">
-                    <span>T1: <span id="t1-val" class="text-gray-300">20</span>ms</span>
-                  </div>
-                  <div class="h-1.5 w-full bg-[#1A2030] rounded-sm overflow-hidden flex">
-                    <div id="t1-bar" class="h-full bg-gradient-to-r from-blue-600 to-blue-400 w-[10%] transition-all duration-500"></div>
-                    <div class="flex-1 flex gap-0.5 ml-0.5">
-                       <div class="w-0.5 h-full bg-[#2A3040]"></div>
-                       <div class="w-0.5 h-full bg-[#2A3040]"></div>
-                    </div>
-                  </div>
-                </div>
-                <!-- T2 -->
-                <div class="group">
-                  <div class="flex justify-between text-[10px] font-mono text-gray-400 mb-0.5">
-                    <span>T2: <span id="t2-val" class="text-gray-300">50</span>ms</span>
-                  </div>
-                  <div class="h-1.5 w-full bg-[#1A2030] rounded-sm overflow-hidden flex">
-                    <div id="t2-bar" class="h-full bg-gradient-to-r from-blue-500 to-cyan-400 w-[25%] transition-all duration-500"></div>
-                    <div class="flex-1 flex gap-0.5 ml-0.5">
-                       <div class="w-0.5 h-full bg-[#2A3040]"></div>
-                       <div class="w-0.5 h-full bg-[#2A3040]"></div>
-                       <div class="w-0.5 h-full bg-[#2A3040]"></div>
-                    </div>
-                  </div>
-                </div>
-                <!-- T3 -->
-                <div class="group">
-                  <div class="flex justify-between text-[10px] font-mono text-gray-400 mb-0.5">
-                    <span>T3: <span id="t3-val" class="text-gray-300">150</span>ms</span>
-                  </div>
-                  <div class="h-1.5 w-full bg-[#1A2030] rounded-sm overflow-hidden flex">
-                    <div id="t3-bar" class="h-full bg-gradient-to-r from-cyan-500 to-blue-500 w-[50%] transition-all duration-500"></div>
-                     <div class="flex-1 flex gap-0.5 ml-0.5">
-                       <div class="w-0.5 h-full bg-[#2A3040]"></div>
-                       <div class="w-0.5 h-full bg-[#2A3040]"></div>
-                    </div>
-                  </div>
-                </div>
-                <!-- T4 -->
-                <div class="group">
-                  <div class="flex justify-between text-[10px] font-mono text-gray-400 mb-0.5">
-                    <span>T4: <span id="t4-val" class="text-gray-300">300</span>ms</span>
-                  </div>
-                  <div class="h-1.5 w-full bg-[#1A2030] rounded-sm overflow-hidden flex">
-                    <div id="t4-bar" class="h-full bg-gradient-to-r from-purple-500 to-indigo-500 w-[80%] transition-all duration-500"></div>
-                     <div class="flex-1 flex gap-0.5 ml-0.5">
-                       <div class="w-0.5 h-full bg-[#2A3040]"></div>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            <!-- Residual Plot -->
-            <div class="mt-2">
-              <div class="text-xs text-gray-500 mb-2">Residual Plot</div>
-              <div class="h-24 w-full bg-[#1A2030] rounded-lg border border-white/5 relative overflow-hidden">
-                <canvas id="residual-plot" class="w-full h-full opacity-80"></canvas>
-              </div>
-            </div>
-          </div>
-
-          <!-- Thought Signature Panel -->
-          <div class="glass-panel p-4 flex flex-col gap-3 shrink-0">
-             <h3 class="text-sm font-medium text-white">Thought Signature</h3>
-             
-             <div class="w-full py-1.5 px-3 bg-blue-600/20 border border-blue-500/30 rounded-full text-center">
-               <span class="text-[10px] text-blue-300 font-medium uppercase tracking-wide">Tactic: <span id="tactic-badge" class="text-white">--</span></span>
-             </div>
-
-             <div class="bg-[#1A2030] rounded-lg overflow-hidden border border-white/5">
-               <div class="grid grid-cols-2 border-b border-white/5 bg-white/5">
-                 <div class="p-1.5 text-[10px] text-gray-400 font-medium pl-3">Intent</div>
-                 <div class="p-1.5 text-[10px] text-gray-400 font-medium">Tone</div>
-               </div>
-               <div class="grid grid-cols-2 border-b border-white/5">
-                 <div class="p-1.5 text-[10px] text-gray-300 pl-3" id="ts-intent">--</div>
-                 <div class="p-1.5 text-[10px] text-gray-300" id="ts-tone">--</div>
-               </div>
-               <div class="grid grid-cols-2 border-b border-white/5">
-                 <div class="p-1.5 text-[10px] text-gray-400 font-medium pl-3">M modifier</div>
-                 <div class="p-1.5 text-[10px] text-gray-400 font-medium">Tier fired</div>
-               </div>
-               <div class="grid grid-cols-2">
-                 <div class="p-1.5 text-[10px] text-gray-300 pl-3" id="ts-m-modifier">--</div>
-                 <div class="p-1.5 text-[10px] text-gray-300" id="ts-tier-fired">--</div>
-               </div>
-             </div>
-          </div>
-
-        </aside>
-
-        <!-- Mobile Overlay Backdrop -->
-        <div id="mobile-backdrop" class="fixed inset-0 bg-black/50 backdrop-blur-sm z-30 opacity-0 pointer-events-none transition-opacity duration-300 lg:hidden"></div>
 
       </main>
 
-      <!-- Debug Overlay Panel -->
-      <div id="debug-overlay" class="fixed right-4 top-20 w-72 max-h-[88vh] overflow-y-auto z-50 rounded-xl border border-blue-500/20 bg-[#0B0F1A]/95 backdrop-blur-xl p-4 font-mono text-[11px] shadow-2xl scrollbar-hide transition-transform duration-300" style="transform: translateX(0);">
-        <div class="flex items-center justify-between mb-3">
-          <span class="text-blue-400 text-[10px] font-semibold tracking-widest uppercase">Live Behavioral State</span>
-          <button id="debug-toggle" class="text-[9px] text-white/40 border border-white/10 px-2 py-0.5 rounded hover:text-white/70 transition-colors">HIDE</button>
-        </div>
-
-        <!-- Behavioral State -->
-        <section class="mb-3 pb-3 border-b border-white/5">
-          <h4 class="text-blue-400/70 text-[9px] tracking-widest uppercase mb-2">Behavioral State</h4>
-          <div class="space-y-1">
-            <div class="flex justify-between"><span class="text-white/40">current_m</span><span id="dbg-current-m" class="text-white/90 font-semibold">--</span></div>
-            <div class="flex justify-between"><span class="text-white/40">weighted_avg</span><span id="dbg-weighted-avg" class="text-white/90">--</span></div>
-            <div class="flex justify-between"><span class="text-white/40">tone_zone</span><span id="dbg-tone-zone" class="font-semibold">--</span></div>
-            <div class="flex justify-between"><span class="text-white/40">turn_count</span><span id="dbg-turn-count" class="text-white/90">0</span></div>
-            <div class="flex justify-between"><span class="text-white/40">cold_start</span><span id="dbg-cold-start" class="text-white/90">--</span></div>
-            <div class="flex justify-between"><span class="text-white/40">troll_defense</span><span id="dbg-troll-defense" class="text-white/90">--</span></div>
-            <div class="flex justify-between"><span class="text-white/40">spike_count</span><span id="dbg-spike-count" class="text-white/90">0</span></div>
-            <div class="flex justify-between"><span class="text-white/40">pitch_hz</span><span id="dbg-pitch-hz" class="text-white/90">--</span></div>
-          </div>
-        </section>
-
-        <!-- Thought Signature -->
-        <section class="mb-3 pb-3 border-b border-white/5">
-          <h4 class="text-purple-400/70 text-[9px] tracking-widest uppercase mb-2">Thought Signature</h4>
-          <div class="space-y-1">
-            <div class="flex justify-between"><span class="text-white/40">intent</span><span id="dbg-intent" class="text-white/90">--</span></div>
-            <div class="flex justify-between"><span class="text-white/40">tone</span><span id="dbg-tone" class="text-white/90">--</span></div>
-            <div class="flex justify-between"><span class="text-white/40">tactic</span><span id="dbg-tactic" class="text-white/90">--</span></div>
-            <div class="flex justify-between"><span class="text-white/40">m_modifier</span><span id="dbg-m-modifier" class="text-white/90">--</span></div>
-            <div class="flex justify-between"><span class="text-white/40">tier_fired</span><span id="dbg-tier-fired" class="text-white/90">--</span></div>
-            <div class="flex justify-between gap-2"><span class="text-white/40 shrink-0">rationale</span><span id="dbg-rationale" class="text-white/60 text-right text-[10px] truncate max-w-[140px]">--</span></div>
-          </div>
-        </section>
-
-        <!-- Tier 4 Gates -->
-        <section class="mb-3 pb-3 border-b border-white/5">
-          <h4 class="text-red-400/70 text-[9px] tracking-widest uppercase mb-2">Tier 4 Sovereign</h4>
-          <div class="space-y-1">
-            <div class="flex justify-between"><span class="text-white/40">trigger_key</span><span id="dbg-sovereign-key" class="text-white/90 text-[10px] truncate max-w-[120px]">--</span></div>
-            <div class="flex justify-between"><span class="text-white/40">gate_1</span><span id="dbg-gate-1" class="font-semibold">--</span><span id="dbg-gate-1-detail" class="text-white/40 text-[9px] ml-1"></span></div>
-            <div class="flex justify-between"><span class="text-white/40">gate_2</span><span id="dbg-gate-2" class="font-semibold">--</span><span id="dbg-gate-2-detail" class="text-white/40 text-[9px] ml-1"></span></div>
-            <div class="flex justify-between"><span class="text-white/40">gate_3</span><span id="dbg-gate-3" class="font-semibold">--</span><span id="dbg-gate-3-detail" class="text-white/40 text-[9px] ml-1"></span></div>
-            <div class="flex justify-between"><span class="text-white/40">conf</span><span id="dbg-transcription-conf" class="text-white/90">--</span></div>
-            <div class="flex justify-between"><span class="text-white/40">vacuum</span><span id="dbg-vacuum" class="text-white/90">--</span></div>
-            <div class="flex justify-between"><span class="text-white/40">response_src</span><span id="dbg-response-source" class="text-white/90">--</span></div>
-          </div>
-        </section>
-
-        <!-- Residual Plot -->
-        <section class="mb-3 pb-3 border-b border-white/5">
-          <h4 class="text-cyan-400/70 text-[9px] tracking-widest uppercase mb-2">Residual Plot</h4>
-          <canvas id="dbg-residual-canvas" width="240" height="50" class="w-full rounded border border-white/5 mb-2"></canvas>
-          <div class="flex justify-between"><span class="text-white/40">weighted_avg</span><span id="dbg-weighted-avg-plot" class="text-white/90">--</span></div>
-        </section>
-
-        <!-- Tier Latencies -->
-        <section>
-          <h4 class="text-green-400/70 text-[9px] tracking-widest uppercase mb-2">Tier Latencies</h4>
-          <div class="space-y-1" id="dbg-latencies">
-            <div class="text-white/30 text-[10px]">Waiting for first turn...</div>
-          </div>
-        </section>
-      </div>
+      <!-- Mobile Overlay Backdrop -->
+      <div id="mobile-backdrop" class="fixed inset-0 bg-black/50 backdrop-blur-sm z-30 opacity-0 pointer-events-none transition-opacity duration-300 lg:hidden"></div>
 
     </div>
     <script>
@@ -556,13 +400,13 @@
       const BACKEND_HTTP = window.WILLOW_BACKEND_URL || '';
       const BACKEND_WS = BACKEND_HTTP
         ? BACKEND_HTTP.replace(/^http/, 'ws')
-        : `${location.protocol === 'https:' ? 'wss:' : 'ws:'}//${location.host}`;
+        : `${location.protocol === 'https:' ? 'wss:' : 'ws:'}//localhost:8080`;
 
       // --- Types & Constants ---
 
       const INITIAL_STATE = {
         status: 'IDLE',
-        mModifier: parseFloat(localStorage.getItem('willow_m_modifier')) || 0.6,
+        mModifier: 0.6,
         isColdStart: true,
         isTrollDefense: true,
         latency: { t1: 20, t2: 50, t3: 150, t4: 300 },
@@ -580,8 +424,6 @@
         #audioContext = null;
         #analyser = null;
         #dataArray = null;
-        #pitchHz = 0;
-        #pitchHistory = [];  // rolling window for pitch smoothing
         #animationFrameId = null;
         #mockSocketInterval = null;
         #sessionTimerInterval = null;
@@ -605,7 +447,6 @@
         #elements = {
           micBtn: document.getElementById('mic-btn'),
           micIcon: document.getElementById('mic-icon'),
-          micStatusText: document.getElementById('mic-status-text'),
           micProgress: document.getElementById('mic-progress'),
           preflightTimer: document.getElementById('preflight-timer'),
           preflightCount: document.getElementById('preflight-count'),
@@ -617,38 +458,16 @@
           wsStatusText: document.getElementById('ws-status-text'),
           wsStatusDot: document.getElementById('ws-status-dot'),
 
-          // Stats
-          mModifierFill: document.getElementById('m-modifier-fill'),
-          mModifierHandle: document.getElementById('m-modifier-handle'),
-          mModifierMeter: document.getElementById('m-modifier-meter'),
-          mModifierSlider: document.getElementById('m-modifier-slider'),
-          
           badgeColdStart: document.getElementById('badge-cold-start'),
           badgeTrollDefense: document.getElementById('badge-troll-defense'),
           
-          t1Val: document.getElementById('t1-val'),
-          t1Bar: document.getElementById('t1-bar'),
-          t2Val: document.getElementById('t2-val'),
-          t2Bar: document.getElementById('t2-bar'),
-          t3Val: document.getElementById('t3-val'),
-          t3Bar: document.getElementById('t3-bar'),
-          t4Val: document.getElementById('t4-val'),
-          t4Bar: document.getElementById('t4-bar'),
-          
-          residualCanvas: document.getElementById('residual-plot'),
-          
-          tacticBadge: document.getElementById('tactic-badge'),
+          residualCanvas: document.getElementById('dbg-residual-canvas'),
           
           turnCounter: document.getElementById('turn-counter'),
           sessionTimer: document.getElementById('session-timer'),
           
           mobileTurnCounter: document.getElementById('mobile-turn-counter'),
           mobileSessionTimer: document.getElementById('mobile-session-timer'),
-          
-          mobileStatsToggle: document.getElementById('mobile-stats-toggle'),
-          sidebarLeft: document.getElementById('sidebar-left'),
-          sidebarRight: document.getElementById('sidebar-right'),
-          mobileBackdrop: document.getElementById('mobile-backdrop'),
         };
 
         constructor() {
@@ -661,87 +480,6 @@
 
         #initEventListeners() {
           this.#elements.micBtn.addEventListener('click', () => this.#handleMicClick());
-          
-          // Slider Logic
-          const startDrag = (e) => {
-            this.#isDraggingSlider = true;
-            this.#updateSliderFromEvent(e);
-          };
-          const onDrag = (e) => {
-            if (!this.#isDraggingSlider) return;
-            e.preventDefault();
-            this.#updateSliderFromEvent(e);
-          };
-          const stopDrag = () => {
-            this.#isDraggingSlider = false;
-          };
-
-          this.#elements.mModifierSlider.addEventListener('mousedown', startDrag);
-          this.#elements.mModifierSlider.addEventListener('touchstart', startDrag, { passive: false });
-          
-          window.addEventListener('mousemove', onDrag);
-          window.addEventListener('touchmove', onDrag, { passive: false });
-          
-          window.addEventListener('mouseup', stopDrag);
-          window.addEventListener('touchend', stopDrag);
-
-          // Mobile Drawer Logic
-          this.#elements.mobileStatsToggle.addEventListener('click', () => {
-            const isOpen = !this.#elements.sidebarLeft.classList.contains('-translate-x-full');
-            this.#toggleMobileDrawer(!isOpen);
-          });
-          
-          this.#elements.mobileBackdrop.addEventListener('click', () => {
-            this.#toggleMobileDrawer(false);
-          });
-          
-          // Latency Toggle Logic
-          const latencyToggle = document.getElementById('latency-toggle');
-          const latencyContent = document.getElementById('latency-content');
-          const latencyChevron = document.getElementById('latency-chevron');
-          
-          if (latencyToggle && latencyContent && latencyChevron) {
-            latencyToggle.addEventListener('click', () => {
-              const isCollapsed = latencyContent.classList.contains('max-h-0');
-              
-              if (isCollapsed) {
-                // Expand
-                latencyContent.classList.remove('max-h-0', 'opacity-0');
-                latencyContent.classList.add('max-h-48', 'opacity-100'); // max-h-48 is enough for content
-                latencyChevron.classList.add('rotate-180');
-              } else {
-                // Collapse
-                latencyContent.classList.remove('max-h-48', 'opacity-100');
-                latencyContent.classList.add('max-h-0', 'opacity-0');
-                latencyChevron.classList.remove('rotate-180');
-              }
-            });
-          }
-        }
-
-        #updateSliderFromEvent(e) {
-            const rect = this.#elements.mModifierSlider.getBoundingClientRect();
-            const clientY = e.touches ? e.touches[0].clientY : e.clientY;
-            
-            // Calculate percentage from bottom (0 at bottom, 1 at top)
-            let val = (rect.bottom - clientY) / rect.height;
-            val = Math.max(0, Math.min(1, val));
-            
-            this.#state.mModifier = val;
-            localStorage.setItem('willow_m_modifier', val.toFixed(4));
-            this.#render();
-        }
-
-        #toggleMobileDrawer(open) {
-          if (open) {
-            this.#elements.sidebarLeft.classList.remove('-translate-x-full');
-            this.#elements.sidebarRight.classList.remove('translate-x-full');
-            this.#elements.mobileBackdrop.classList.remove('opacity-0', 'pointer-events-none');
-          } else {
-            this.#elements.sidebarLeft.classList.add('-translate-x-full');
-            this.#elements.sidebarRight.classList.add('translate-x-full');
-            this.#elements.mobileBackdrop.classList.add('opacity-0', 'pointer-events-none');
-          }
         }
 
         async #handleMicClick() {
@@ -802,9 +540,7 @@
             this.#render();
 
             await this.#startAudio();
-            // Reset timer on first entry, resume on MIC_OFF → LIVE toggle
-            const isResume = this.#state.sessionDuration > 0;
-            this.#startSessionTimer(/* reset */ !isResume);
+            if (!this.#sessionTimerInterval) this.#startSessionTimer();
             this.#startDebugPolling();
           }
           else if (newState === 'MIC_OFF') {
@@ -813,9 +549,6 @@
             this.#elements.micIcon.classList.add('text-gray-400');
             this.#elements.micProgress.style.strokeDashoffset = '289';
             this.#stopMicCapture();
-            // Pause session timer while mic is off
-            this.#stopSessionTimer();
-            // Keep debug polling alive so turn counter stays current
           }
           else if (newState === 'IDLE') {
             this.#preflightActive = false;
@@ -824,7 +557,6 @@
 
             this.#stopMicCapture();
             this.#stopSessionTimer();
-            this.#state.sessionDuration = 0;
             this.#stopDebugPolling();
 
             if (this.#ws && this.#ws.readyState === WebSocket.OPEN) {
@@ -889,7 +621,6 @@
 
           switch (msg.type) {
             case 'turn_complete':
-              if (msg.user_text) this.#addTranscriptEntry('user', msg.user_text);
               if (msg.text) this.#addTranscriptEntry('willow', msg.text);
               // Ensure thinking indicator is hidden and UI is reset, even if audio playback is already finished
               this.#elements.thinking.classList.add('opacity-0');
@@ -966,9 +697,7 @@
 
         #ensurePlaybackCtx() {
           if (!this.#playbackCtx || this.#playbackCtx.state === 'closed') {
-            // Use system default rate (typically 48kHz) — createBuffer()
-            // resamples from 24kHz source. Forcing 24kHz causes artifacts.
-            this.#playbackCtx = new AudioContext();
+            this.#playbackCtx = new AudioContext({ sampleRate: 24000 });
             this.#nextPlayTime = 0;
           }
           // Resume if suspended (autoplay policy)
@@ -1073,7 +802,7 @@
             tzEl.className = `font-semibold ${tzColors[b.tone_zone] || 'text-white/90'}`;
           }
 
-          // Thought Signature — debug overlay
+          // Thought Signature
           const ts = data.thought_signature || {};
           setDbg('dbg-intent', ts.intent);
           setDbg('dbg-tone', ts.tone);
@@ -1081,14 +810,6 @@
           setDbg('dbg-m-modifier', ts.m_modifier?.toFixed(2));
           setDbg('dbg-tier-fired', ts.tier_fired);
           setDbg('dbg-rationale', ts.rationale);
-
-          // Thought Signature — main panel (previously hardcoded static)
-          setDbg('ts-intent', ts.intent);
-          setDbg('ts-tone', ts.tone);
-          setDbg('ts-m-modifier', ts.m_modifier != null ? ts.m_modifier.toFixed(2) : null);
-          setDbg('ts-tier-fired', ts.tier_fired != null ? `T${ts.tier_fired}` : null);
-          const tacticBadge = document.getElementById('tactic-badge');
-          if (tacticBadge) tacticBadge.textContent = ts.detected_tactic ?? '--';
 
           // Tier 4 Gates
           const t4 = data.tier4 || {};
@@ -1217,7 +938,7 @@
             const source = this.#audioContext.createMediaStreamSource(stream);
 
             this.#analyser = this.#audioContext.createAnalyser();
-            this.#analyser.fftSize = 2048;  // higher resolution for pitch detection
+            this.#analyser.fftSize = 256;
             this.#analyser.smoothingTimeConstant = 0.8;
             source.connect(this.#analyser);
 
@@ -1246,11 +967,10 @@
           const targetRate = 16000;
           const sourceRate = this.#audioContext.sampleRate;
 
-          const SILENCE_RMS = parseInt(localStorage.getItem('willow_silence_rms'), 10) || 400;
+          const SILENCE_RMS = 400;        // 16-bit PCM RMS threshold for "silence"
           const SILENCE_MS  = 1500;       // 1.5s of silence triggers end_turn
           let silenceStart = null;
           let turnActive = false;
-          let lastPitchSend = 0;
 
           this.#scriptProcessor.onaudioprocess = (e) => {
             if (this.#state.status !== 'LIVE' || !this.#ws || this.#ws.readyState !== WebSocket.OPEN) return;
@@ -1267,13 +987,6 @@
 
             // Send audio to server
             this.#ws.send(pcm16.buffer);
-
-            // Send pitch metadata every ~500ms
-            const now = performance.now();
-            if (this.#pitchHz > 0 && now - lastPitchSend > 500) {
-              this.#ws.send(JSON.stringify({ type: 'pitch', hz: this.#pitchHz }));
-              lastPitchSend = now;
-            }
 
             // Client-side silence detection for end-of-turn
             let sum = 0;
@@ -1361,53 +1074,10 @@
           this.#isPlaying = false;
         }
 
-        // FFT pitch detection via autocorrelation on time-domain data.
-        // Returns estimated fundamental frequency in Hz, or 0 if no pitch detected.
-        #detectPitch() {
-          if (!this.#analyser || !this.#audioContext) return 0;
-          const buf = new Float32Array(this.#analyser.fftSize);
-          this.#analyser.getFloatTimeDomainData(buf);
-
-          // Check if signal has enough energy
-          let rms = 0;
-          for (let i = 0; i < buf.length; i++) rms += buf[i] * buf[i];
-          rms = Math.sqrt(rms / buf.length);
-          if (rms < 0.01) return 0;  // too quiet
-
-          // Autocorrelation pitch detection
-          const sampleRate = this.#audioContext.sampleRate;
-          const minLag = Math.floor(sampleRate / 500);  // 500 Hz max
-          const maxLag = Math.floor(sampleRate / 70);   // 70 Hz min
-          let bestCorr = 0;
-          let bestLag = 0;
-          for (let lag = minLag; lag < maxLag && lag < buf.length; lag++) {
-            let corr = 0;
-            for (let i = 0; i < buf.length - lag; i++) {
-              corr += buf[i] * buf[i + lag];
-            }
-            if (corr > bestCorr) {
-              bestCorr = corr;
-              bestLag = lag;
-            }
-          }
-          if (bestLag === 0) return 0;
-          const hz = sampleRate / bestLag;
-
-          // Smooth with rolling window (last 5 frames)
-          this.#pitchHistory.push(hz);
-          if (this.#pitchHistory.length > 5) this.#pitchHistory.shift();
-          const avg = this.#pitchHistory.reduce((a, b) => a + b, 0) / this.#pitchHistory.length;
-          this.#pitchHz = Math.round(avg);
-          return this.#pitchHz;
-        }
-
         #drawVisualizer() {
           if (!this.#analyser || !this.#dataArray) return;
 
           this.#analyser.getByteFrequencyData(this.#dataArray);
-          const pitch = this.#detectPitch();
-          const pitchEl = document.getElementById('dbg-pitch-hz');
-          if (pitchEl) pitchEl.textContent = pitch > 0 ? `${pitch} Hz` : '--';
           
           const canvas = this.#elements.visualizerCanvas;
           const ctx = canvas.getContext('2d');
@@ -1561,26 +1231,21 @@
           this.#addTranscriptEntry('willow', phrases[Math.floor(Math.random() * phrases.length)]);
         }
 
-        #startSessionTimer(reset = true) {
-          if (reset) this.#state.sessionDuration = 0;
-          // Clear any existing interval before starting a new one
-          if (this.#sessionTimerInterval) clearInterval(this.#sessionTimerInterval);
+        #startSessionTimer() {
+          this.#state.sessionDuration = 0;
           this.#sessionTimerInterval = window.setInterval(() => {
             this.#state.sessionDuration++;
             const mins = Math.floor(this.#state.sessionDuration / 60).toString().padStart(2, '0');
             const secs = (this.#state.sessionDuration % 60).toString().padStart(2, '0');
             const timeStr = `${mins}:${secs}`;
-
+            
             if (this.#elements.sessionTimer) this.#elements.sessionTimer.innerText = timeStr;
             if (this.#elements.mobileSessionTimer) this.#elements.mobileSessionTimer.innerText = timeStr;
           }, 1000);
         }
 
         #stopSessionTimer() {
-          if (this.#sessionTimerInterval) {
-            clearInterval(this.#sessionTimerInterval);
-            this.#sessionTimerInterval = null;
-          }
+          if (this.#sessionTimerInterval) clearInterval(this.#sessionTimerInterval);
         }
 
         #startDebugPolling() {

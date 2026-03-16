@@ -49,11 +49,12 @@ steps:
       - '--image=gcr.io/$PROJECT_ID/willow:$COMMIT_SHA'
       - '--region=us-central1'
       - '--platform=managed'
-      - '--min-instances=1'
+      - '--min-instances=0'
       - '--cpu=2'
       - '--memory=4Gi'
-      - '--timeout=60s'
+      - '--timeout=3600s'
       - '--set-env-vars=GCP_PROJECT_ID=$PROJECT_ID'
+      - '--update-secrets=GOOGLE_API_KEY=GEMINI_API_KEY:latest'
       - '--allow-unauthenticated'
 
 images:

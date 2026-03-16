@@ -5,7 +5,7 @@ Hard override layer. When all three gates pass, cancels the active Gemini
 generation coroutine and delivers a deterministic, LLM-free response.
 
 Execution sequence (FR-008g, FR-008h, FR-008e, FR-022):
-1. Call hard_exit() to cancel active Gemini coroutine (FR-008g).
+1. Interrupt active Gemini generation via streaming_session.interrupt() (FR-008g).
 2. Check truth.vacuum_mode:
    - True:  suppress all speech output; play acoustic heartbeat only;
             store truth.response_on_return on SessionState for delivery
@@ -30,9 +30,10 @@ import time
 from dataclasses import dataclass, field
 from typing import Any, Final, Optional
 
-from ..core.sovereign_truth import SovereignTruth, SovereignTruthCache
+from ..core.sovereign_truth import SovereignTruth, SovereignTruthCache, MIN_TRANSCRIPTION_CONFIDENCE
 from ..core.state_manager import StateManager
 from .tier_trigger import TierTrigger
+from ..voice.gemini_live import StreamingSession
 
 logger = logging.getLogger(__name__)
 
@@ -48,7 +49,8 @@ class Tier4Result:
     Attributes:
         fired: True when all three gates passed and the hard override executed.
         vacuum_mode: True when the matched truth used vacuum mode.
-        response_text: The constructed response (empty if vacuum_mode).
+        forced_prefix: Exact words Willow must use to start her sentence.
+        response_directive: Strict instruction to the LLM on how to finish the sentence.
         synthetic_turn: Dict appended to conversation history, or None
             when vacuum_mode is True.
         audio_started_set: True when set_audio_started() was called.
@@ -61,7 +63,8 @@ class Tier4Result:
 
     fired: bool
     vacuum_mode: bool
-    response_text: str
+    forced_prefix: str
+    response_directive: str
     synthetic_turn: Optional[dict]
     audio_started_set: bool
     flush_audio_buffer: bool
@@ -73,7 +76,8 @@ class Tier4Result:
         return {
             "fired": self.fired,
             "vacuum_mode": self.vacuum_mode,
-            "response_text": self.response_text,
+            "forced_prefix": self.forced_prefix,
+            "response_directive": self.response_directive,
             "synthetic_turn": self.synthetic_turn,
             "audio_started_set": self.audio_started_set,
             "flush_audio_buffer": self.flush_audio_buffer,
@@ -98,7 +102,7 @@ class Tier4Sovereign:
         tier4 = Tier4Sovereign(cache, state_manager)
 
         # After three-gate check passes:
-        result = await tier4.execute(truth, active_gemini_task)
+        result = await tier4.execute(truth, streaming_session)
         if result.fired and not result.vacuum_mode:
             # Inject result.response_text into audio pipeline
             # Append result.synthetic_turn to conversation history
@@ -120,7 +124,7 @@ class Tier4Sovereign:
     async def execute(
         self,
         truth: SovereignTruth,
-        active_task: Optional[asyncio.Task] = None,
+        streaming_session: Optional[StreamingSession] = None,
     ) -> Tier4Result:
         """
         Execute the full Tier 4 hard override sequence.
@@ -130,16 +134,27 @@ class Tier4Sovereign:
 
         Args:
             truth: The matching SovereignTruth from gate evaluation.
-            active_task: The currently running Gemini generation asyncio.Task,
-                or None if no task is active.
+            streaming_session: The currently running StreamingSession,
+                or None if no session is active.
 
         Returns:
             Tier4Result describing what was done.
         """
         start_ns = time.perf_counter_ns()
 
-        # Step 1: Hard exit — cancel active Gemini coroutine (FR-008g)
-        await SovereignTruthCache.hard_exit(active_task)
+        # Step 1: Interrupt active Gemini generation (FR-008g / Q11 fix).
+        # Replaces the dead-code hard_exit() path. We call interrupt()
+        # directly on the streaming session to halt any in-progress audio.
+        # THIS IS THE ONLY streaming_session call tier4_sovereign.py makes.
+        # Behavioral context injection is main.py's sole responsibility —
+        # tier4_sovereign.py returns forced_prefix + response_directive in
+        # Tier4Result and never calls inject_behavioral_context() directly.
+        if streaming_session is not None and streaming_session.is_connected:
+            try:
+                from ..voice.gemini_live import InterruptionReason
+                await streaming_session.interrupt(reason=InterruptionReason.USER_SPEECH_DETECTED)
+            except Exception as e:
+                logger.warning("Tier 4 interrupt failed: %s", e)
 
         # Step 2: Vacuum mode branch
         if truth.vacuum_mode:
@@ -178,7 +193,8 @@ class Tier4Sovereign:
             return Tier4Result(
                 fired=True,
                 vacuum_mode=True,
-                response_text="",
+                forced_prefix="",
+                response_directive="",
                 synthetic_turn=None,
                 audio_started_set=True,
                 flush_audio_buffer=False,
@@ -187,8 +203,8 @@ class Tier4Sovereign:
                 tier_trigger=vacuum_tier_trigger,
             )
 
-        # Step 3: Build response from response_template (FR-008h)
-        response_text = SovereignTruthCache.build_response(truth)
+        # Step 3: Extract forced_prefix and response_directive from truth (FR-008h)
+        # Dynamic Determinism: LLM delivers response guided by sovereign constraints.
 
         # Step 4: (Caller injects into audio pipeline — zero LLM tokens, FR-007)
 
@@ -202,9 +218,9 @@ class Tier4Sovereign:
         within_budget = latency_ms < TIER4_LATENCY_BUDGET_MS
 
         logger.info(
-            "Tier 4 fired: truth=%s vacuum=False response=%r latency=%.2fms",
+            "Tier 4 fired: truth=%s vacuum=False prefix=%r latency=%.2fms",
             truth.key,
-            response_text[:60],
+            truth.forced_prefix[:60],
             latency_ms,
         )
 
@@ -230,7 +246,8 @@ class Tier4Sovereign:
         return Tier4Result(
             fired=True,
             vacuum_mode=False,
-            response_text=response_text,
+            forced_prefix=truth.forced_prefix,
+            response_directive=truth.response_directive,
             synthetic_turn=synthetic_turn,
             audio_started_set=True,
             flush_audio_buffer=True,
@@ -245,7 +262,7 @@ class Tier4Sovereign:
         transcription_confidence: float,
         weighted_average_m: float,
         tier3_intent_factory,
-        active_task: Optional[asyncio.Task] = None,
+        streaming_session: Optional[StreamingSession] = None,
     ) -> Optional[Tier4Result]:
         """
         Run all three gates and execute if all pass.
@@ -259,7 +276,7 @@ class Tier4Sovereign:
             tier3_intent_factory: Zero-argument callable returning a coroutine
                 that resolves to (intent: str, confidence: float). Called lazily
                 — only invoked when gates 1 and 2 have passed.
-            active_task: Active Gemini generation task, or None.
+            streaming_session: Active Gemini StreamingSession, or None.
 
         Returns:
             Tier4Result if all gates passed and override executed;
@@ -273,11 +290,19 @@ class Tier4Sovereign:
         gate_results = {}
 
         if candidate is None:
-            gate_results["gate_1"] = {"passed": False, "confidence": transcription_confidence}
+            gate_results["gate_1"] = {
+                "asr_confidence": round(transcription_confidence, 2),
+                "keyword_match": "NONE",
+                "gate_1": "FAIL" if transcription_confidence < MIN_TRANSCRIPTION_CONFIDENCE else "NO TRIGGER",
+            }
             state.last_gate_results = gate_results
             return None
 
-        gate_results["gate_1"] = {"passed": True, "confidence": transcription_confidence}
+        gate_results["gate_1"] = {
+            "asr_confidence": round(transcription_confidence, 2),
+            "keyword_match": candidate.key,
+            "gate_1": "PASS",
+        }
         state.last_sovereign_key = candidate.key
         state.last_transcription_confidence = transcription_confidence
 
@@ -327,12 +352,12 @@ class Tier4Sovereign:
         if not gate3_passed:
             return None
 
-        return await self.execute(candidate, active_task)
+        return await self.execute(candidate, streaming_session)
 
     async def evaluate_deferred_contradictions(
         self,
         current_user_input: str,
-        active_task: Optional[asyncio.Task] = None,
+        streaming_session: Optional[StreamingSession] = None,
     ) -> Optional[Tier4Result]:
         """
         T076 / FR-021: Evaluate deferred contradictions at turn 4.
@@ -354,7 +379,7 @@ class Tier4Sovereign:
 
         Args:
             current_user_input: The turn 4 user input for relevance check.
-            active_task: Active Gemini generation task, or None.
+            streaming_session: Active Gemini StreamingSession, or None.
 
         Returns:
             Tier4Result if a relevant deferred contradiction was found and
@@ -366,6 +391,12 @@ class Tier4Sovereign:
 
         normalized_input = self._cache._normalize_input(current_user_input)
 
+        # Q28: Track the highest-priority unmatched truth so we can fire it
+        # even if the user changed the subject. Sovereign Truths are factual
+        # corrections that must be delivered — silently dropping them leaves
+        # Willow complicit in misinformation.
+        best_unmatched: Optional[SovereignTruth] = None
+
         for dc in deferred:
             # Relevance check: keyword overlap between deferred truth and current input
             overlap_count = sum(
@@ -374,14 +405,6 @@ class Tier4Sovereign:
                 if self._cache._normalize_input(kw) in normalized_input
             )
 
-            if overlap_count == 0:
-                logger.debug(
-                    "Deferred contradiction discarded (no relevance): truth=%s",
-                    dc.truth_key,
-                )
-                continue
-
-            # Relevant — fire with the matched truth
             truth = self._cache.get(dc.truth_key)
             if truth is None:
                 logger.warning(
@@ -390,11 +413,28 @@ class Tier4Sovereign:
                 )
                 continue
 
+            if overlap_count > 0:
+                # Relevant — fire immediately with the matched truth
+                logger.info(
+                    "Deferred contradiction fired (relevant at turn 4): truth=%s overlap=%d",
+                    dc.truth_key,
+                    overlap_count,
+                )
+                return await self.execute(truth, streaming_session)
+
+            # Track highest-priority unmatched truth
+            if best_unmatched is None or truth.priority > best_unmatched.priority:
+                best_unmatched = truth
+
+        # Q28: Fire the highest-priority deferred truth even without keyword
+        # overlap. The user changed the subject, but the correction still needs
+        # to be delivered. Willow will weave it in naturally via the forced_prefix.
+        if best_unmatched is not None:
             logger.info(
-                "Deferred contradiction fired (relevant at turn 4): truth=%s overlap=%d",
-                dc.truth_key,
-                overlap_count,
+                "Deferred contradiction fired (no keyword overlap, priority=%d): truth=%s",
+                best_unmatched.priority,
+                best_unmatched.key,
             )
-            return await self.execute(truth, active_task)
+            return await self.execute(best_unmatched, streaming_session)
 
         return None

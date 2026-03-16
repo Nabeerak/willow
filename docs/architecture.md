@@ -1,31 +1,45 @@
-# Willow Architecture
+# <img src="../Gemini_Generated_Image_jhw85ejhw85ejhw8.png" width="100" height="100" align="right" /> Willow Architecture
+
+## System Overview
+
+```mermaid
+flowchart TD
+    MIC["🎤 Browser Microphone\n(getUserMedia)"]
+    NGP["noise-gate-processor.js\nAdaptive buffer 1024→512\n3s preflight warmup"]
+    WS["WebSocket\nbinary audio + JSON control"]
+    AGENT["WillowAgent (src/main.py)\nSession orchestration"]
+
+    T1["Tier 1: Reflex  &lt;50ms\nTone mirroring, Warm but Sharp"]
+    T2["Tier 2: Metabolism  &lt;5ms\naₙ₊₁ = aₙ + d + m"]
+    T3["Tier 3: Conscious  &lt;500ms\nThoughtSignature + TacticDetector"]
+    T4["Tier 4: Sovereign  &lt;2s\nDeterministic truth override"]
+
+    GEMINI["☁️ Gemini Live API\ngoogle-genai BidiGenerateContent\ngemini-2.5-flash-native-audio-preview"]
+    ST["data/sovereign_truths.json\n(zero LLM involvement)"]
+
+    AUDIO_OUT["🔊 Audio Output\nPCM stream back to browser"]
+    FILLER["Filler Audio Player\nhmm.wav / aah.wav (≥200ms mask)"]
+
+    MIC --> NGP --> WS --> AGENT
+    AGENT --> T1 --> T2 --> T3 --> T4
+    T3 -- "streaming turns" --> GEMINI
+    GEMINI -- "PCM audio + transcript" --> AUDIO_OUT
+    T4 -- "override: cancel Gemini coroutine" --> GEMINI
+    T4 -- "lookup" --> ST
+    T3 -- "latency > 200ms" --> FILLER
+    T4 -- "latency > 200ms" --> FILLER
+    AGENT -- "flush_audio_buffer cmd" --> NGP
+```
 
 ## Four-Tier Processing Pipeline
 
-```
-User Input
-   │
-   ▼
-Tier 1: Reflex (<50ms)
-   │  Tone detection, Warm but Sharp opener selection
-   │  Runs on every token — immediate tone mirroring
-   ▼
-Tier 2: Metabolism (<5ms)
-   │  State formula: aₙ₊₁ = aₙ + d + m
-   │  Applies ±2.0 cap, Cold Start (d=0 turns 1-3)
-   │  Updates SessionState atomically via asyncio.Lock
-   ▼
-Tier 3: Conscious (<500ms)  [background asyncio.Task]
-   │  ThoughtSignature: Intent/Tone separation (Principle II)
-   │  TacticDetector: soothing, mirroring, gaslighting, deflection, contextual_sarcasm
-   │  Sincere Pivot detection (Grace Boost path)
-   ▼
-Tier 4: Sovereign (<2s)  [background asyncio.Task — on-demand]
-   │  Three-gate check: confidence → keyword match → Tier 3 intent
-   │  Hard exit: task.cancel() on active Gemini coroutine
-   │  Response from data/sovereign_truths.json — zero LLM involvement
-   │  Synthetic turn injection (FR-008e)
-   └── Flush AudioWorklet on fire (T025)
+![Willow Architecture Diagram](architecture.svg)
+
+Gemini Live API (☁️ google-genai BidiGenerateContent)
+   │  Model: gemini-2.5-flash-native-audio-preview-12-2025
+   │  Bidirectional: sends audio → receives PCM audio + transcript
+   │  Cancelled by Tier 4 when Sovereign Truth fires
+   └── PCM audio streamed back to browser via WebSocket
 ```
 
 ## State Formula

@@ -23,10 +23,13 @@ m-value influence (from Constitution persona standards):
 - Neutral m (~0): Balanced, professional tone
 """
 
+import logging
 import re
 import time
 from dataclasses import dataclass, field
 from typing import Literal
+
+logger = logging.getLogger(__name__)
 
 from ..signatures.thought_signature import ToneType, VALID_TONES
 from ..persona.warm_sharp import select_opener, apply_behavioral_tells, get_m_range
@@ -402,7 +405,7 @@ class Tier1Reflex:
         if not adjusted.rstrip().endswith(("!", "?", ".", "...")):
             endings = adjustments.get("endings", "").split(",")
             if endings and endings[0].strip():
-                adjusted = adjusted.rstrip() + " " + endings[0].strip()
+                adjusted = adjusted
 
         # For aggressive tone in negative state, ensure clear boundaries
         if tone == "aggressive":
@@ -462,6 +465,7 @@ class Tier1Reflex:
         total_latency = self._get_timestamp_ms() - start_time
         budget_exceeded = total_latency > TIER1_LATENCY_BUDGET_MS
 
+        logger.info(f"TIER 1 FIRED: m={current_m}, opener='{prefix}'")
         return ReflexResult(
             response_prefix=prefix,
             adjusted_response=adjusted_response,

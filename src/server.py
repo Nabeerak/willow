@@ -13,6 +13,7 @@ Endpoints:
 
 import json
 import logging
+from contextlib import asynccontextmanager
 
 # Configure logging BEFORE any getLogger calls so all Willow modules
 # (gemini_live, main, tiers, etc.) emit INFO-level logs when running
@@ -23,8 +24,11 @@ logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
 )
 
+from pathlib import Path
+
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from .core.sovereign_truth import SovereignTruth
@@ -40,9 +44,32 @@ You hold your ground with warmth. You push back when needed.
 You are Warm but Sharp — never cold, never a pushover.
 Your memory is exact. Your standards are non-negotiable.
 When you don't know something, you say so directly — you never fabricate.
-You were built by Nabeera, a solo developer, with precision and intent."""
+You were built by Nabeera, a solo developer, with precision and intent.
 
-app = FastAPI(title="Willow Voice Agent", version="0.1.0")
+WHAT YOU CAN SEE:
+You may receive visual context from the user's camera or screen.
+Use it naturally. If you see something relevant, acknowledge it.
+If the user's expression contradicts their words, you may notice.
+Do not narrate everything you see. Only speak to what matters.
+"I can see you're looking at..." is acceptable.
+"I notice your expression suggests..." is acceptable.
+Never say "I am analyzing your image." Just respond."""
+
+# Single agent instance shared across requests — created before lifespan
+agent = WillowAgent()
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Handle startup and graceful SIGTERM shutdown."""
+    logger.info("Willow starting up")
+    yield
+    logger.info("Willow shutting down — cancelling active tasks")
+    await agent.shutdown()
+    logger.info("Willow shutdown complete")
+
+
+app = FastAPI(title="Willow Voice Agent", version="0.1.0", lifespan=lifespan)
 
 # CORS — allow dashboard dev server and local file access
 app.add_middleware(
@@ -51,10 +78,6 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
-# Single agent instance shared across requests
-agent = WillowAgent()
-
 
 # ---------------------------------------------------------------------------
 # REST endpoints
@@ -70,12 +93,22 @@ async def create_session():
 @app.get("/api/v1/session/{session_id}/state")
 async def session_state(session_id: str):
     """Return current session state snapshot."""
+    if session_id != agent.session_id:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Session '{session_id}' not active. This agent currently hosts session '{agent.session_id}'."
+        )
     return agent.get_session_state().to_dict()
 
 
 @app.get("/api/v1/session/{session_id}/debug")
 async def debug_state(session_id: str):
     """Return full debug state for the live overlay."""
+    if session_id != agent.session_id:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Session '{session_id}' not active. This agent currently hosts session '{agent.session_id}'."
+        )
     return agent.get_debug_state()
 
 
@@ -87,7 +120,8 @@ class TruthCreate(BaseModel):
     key: str = Field(..., min_length=1)
     assertion: str = Field(..., min_length=1)
     contradiction_keywords: list[str] = Field(..., min_length=1)
-    response_template: str = Field(..., min_length=1)
+    forced_prefix: str = Field(..., min_length=1)
+    response_directive: str = Field(..., min_length=1)
     priority: int = Field(..., ge=1, le=10)
     vacuum_mode: bool = False
     response_on_return: str | None = None
@@ -96,7 +130,8 @@ class TruthCreate(BaseModel):
 class TruthUpdate(BaseModel):
     assertion: str | None = None
     contradiction_keywords: list[str] | None = None
-    response_template: str | None = None
+    forced_prefix: str | None = None
+    response_directive: str | None = None
     priority: int | None = Field(None, ge=1, le=10)
     vacuum_mode: bool | None = None
     response_on_return: str | None = None
@@ -123,7 +158,8 @@ async def create_truth(body: TruthCreate):
         key=body.key,
         assertion=body.assertion,
         contradiction_keywords=tuple(body.contradiction_keywords),
-        response_template=body.response_template,
+        forced_prefix=body.forced_prefix,
+        response_directive=body.response_directive,
         priority=body.priority,
         vacuum_mode=body.vacuum_mode,
         response_on_return=body.response_on_return,
@@ -145,8 +181,9 @@ async def update_truth(key: str, body: TruthUpdate):
             if body.contradiction_keywords is not None
             else existing.contradiction_keywords
         ),
-        response_template=(
-            body.response_template if body.response_template is not None else existing.response_template
+        forced_prefix=body.forced_prefix if body.forced_prefix is not None else existing.forced_prefix,
+        response_directive=(
+            body.response_directive if body.response_directive is not None else existing.response_directive
         ),
         priority=body.priority if body.priority is not None else existing.priority,
         vacuum_mode=body.vacuum_mode if body.vacuum_mode is not None else existing.vacuum_mode,
@@ -201,3 +238,8 @@ async def voice_stream(websocket: WebSocket, session_id: str):
         logger.error("WebSocket error for session %s: %s", session_id, e)
     finally:
         logger.info("WebSocket closed for session %s", session_id)
+
+# Serve dashboard from same origin so relative WS URLs work without CORS
+_DASHBOARD_DIR = Path(__file__).parent.parent / "willow-dashboard"
+if _DASHBOARD_DIR.exists():
+    app.mount("/", StaticFiles(directory=str(_DASHBOARD_DIR), html=True), name="dashboard")

@@ -10,6 +10,14 @@ Key features:
 - Cold Start logic (d=0 for turns 1-3)
 - ±2.0 state change cap enforcement
 - Sovereign Spike tracking for Troll Defense
+
+Scaling note:
+  The asyncio.Lock is uncontended in single-session-per-process deployments
+  (current architecture). For horizontal scaling across 1000+ concurrent
+  sessions, replace _state with a Redis hash and swap the Lock for a
+  Redis distributed lock (e.g. redlock-py). Each session_id maps to one
+  Redis key. No other changes required — the StateManager interface stays
+  identical.
 """
 
 import asyncio
@@ -214,8 +222,13 @@ class StateManager:
                 # Non-sincere turn — reset cumulative forgiveness counter
                 self._state.consecutive_sincere_turns = 0
             else:
-                # Reset spike count on non-spike turn
-                self._state.sovereign_spike_count = 0
+                # Q7: Only reset spike count on genuinely collaborative turns
+                # (m_modifier > 0), not on every non-spike turn. This allows
+                # spikes to accumulate across a 4-turn window even with neutral
+                # turns in between. Full reset also happens via
+                # deactivate_troll_defense() on sincere pivot.
+                if m_modifier > 0:
+                    self._state.sovereign_spike_count = 0
 
             # Update Residual Plot
             self._state.residual_plot.add_turn(capped_m)
@@ -242,6 +255,7 @@ class StateManager:
         tier2_modifier: float,
         tier3_modifier: float,
         tier3_is_spike: bool,
+        correction_turn_count: int = 0,
     ) -> Optional[float]:
         """
         Apply retroactive correction when Tier 3 intent contradicts Tier 2 heuristic.
@@ -254,6 +268,9 @@ class StateManager:
             tier2_modifier: The m_modifier Tier 2 applied synchronously.
             tier3_modifier: The m_modifier Tier 3 computed asynchronously.
             tier3_is_spike: Whether Tier 3 classified as sovereign spike.
+            correction_turn_count: The turn_count at the time Tier 2 ran.
+                Used to compute the residual plot offset so the correction
+                targets the correct turn (Q10/Q21 fix).
 
         Returns:
             The correction delta applied, or None if no correction needed.
@@ -266,10 +283,17 @@ class StateManager:
             # Apply the correction delta
             capped_delta = max(-MAX_STATE_CHANGE, min(MAX_STATE_CHANGE, delta))
             self._state.current_m = max(M_FLOOR, min(M_CEILING, self._state.current_m + capped_delta))
-            self._state.residual_plot.add_correction(capped_delta)
 
-            # If Tier 3 says it's a spike but Tier 2 missed it, update spike tracking
-            if tier3_is_spike and self._state.sovereign_spike_count == 0:
+            # Q10/Q21: Compute the offset into m_values so the correction
+            # targets the turn that Tier 2 originally scored, not the most
+            # recent turn (which may belong to a newer Tier 2 run).
+            turn_offset = max(0, self._state.turn_count - correction_turn_count)
+            self._state.residual_plot.add_correction(capped_delta, turn_offset=turn_offset)
+
+            # If Tier 3 says it's a spike but Tier 2 missed it, accumulate spike count.
+            # Q10: Always increment — the previous guard (== 0) silently dropped spikes
+            # when Tier 2 of the next turn had already registered one.
+            if tier3_is_spike:
                 self._state.sovereign_spike_count += 1
                 if self._state.sovereign_spike_count >= SOVEREIGN_SPIKE_THRESHOLD:
                     self._state.troll_defense_active = True

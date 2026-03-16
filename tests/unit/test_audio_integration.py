@@ -33,7 +33,8 @@ def _make_truth(key="test-truth", vacuum=False):
         key=key,
         assertion="The sky is blue.",
         contradiction_keywords=["sky", "blue", "color"],
-        response_template="Actually, {assertion}" if not vacuum else "[VACUUM_MODE]",
+        forced_prefix="Actually, {assertion}" if not vacuum else "[VACUUM_MODE]",
+        response_directive="[test directive]",
         priority=1,
         vacuum_mode=vacuum,
         response_on_return="Stored response" if vacuum else None,
@@ -56,7 +57,7 @@ class TestFlushAudioBuffer:
         tier4 = Tier4Sovereign(cache, manager)
         truth = _make_truth()
 
-        result = await tier4.execute(truth, active_task=None)
+        result = await tier4.execute(truth, streaming_session=None)
 
         assert result.fired is True
         assert result.vacuum_mode is False
@@ -70,7 +71,7 @@ class TestFlushAudioBuffer:
         tier4 = Tier4Sovereign(cache, manager)
         truth = _make_truth(vacuum=True)
 
-        result = await tier4.execute(truth, active_task=None)
+        result = await tier4.execute(truth, streaming_session=None)
 
         assert result.fired is True
         assert result.vacuum_mode is True
@@ -108,7 +109,8 @@ class TestFlushAudioBuffer:
         result = Tier4Result(
             fired=True,
             vacuum_mode=False,
-            response_text="test",
+            forced_prefix="test",
+            response_directive="[test directive]",
             synthetic_turn=None,
             audio_started_set=True,
             flush_audio_buffer=True,
@@ -166,7 +168,7 @@ class TestPreflightWarmup:
             transcription_confidence=0.95,
             weighted_average_m=0.0,
             tier3_intent_factory=lambda: _mock_tier3(),
-            active_task=None,
+            streaming_session=None,
         )
 
         # Tier 4 should be suppressed — preflight is active
@@ -191,7 +193,7 @@ class TestPreflightWarmup:
             transcription_confidence=0.95,
             weighted_average_m=0.0,
             tier3_intent_factory=lambda: _mock_tier3(),
-            active_task=None,
+            streaming_session=None,
         )
 
         # May or may not fire depending on gate 2/3 — but it's not blocked by preflight

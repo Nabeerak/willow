@@ -15,6 +15,7 @@ import asyncio
 import base64
 import json
 import logging
+import struct
 import uuid
 from contextlib import AsyncExitStack
 from dataclasses import dataclass, field
@@ -34,6 +35,14 @@ logger = logging.getLogger(__name__)
 AUDIO_SAMPLE_RATE_HZ = 16000
 AUDIO_BITS_PER_SAMPLE = 16
 AUDIO_CHANNELS = 1
+
+# Zone → voice mapping.  Default (neutral_m) is Leda.
+# Voice can be updated mid-session via a setup message without reconnecting.
+ZONE_VOICE_MAP: dict[str, str] = {
+    "high_m": "Zephyr",
+    "neutral_m": "Leda",
+    "low_m": "Aoede",
+}
 
 
 class SessionState(Enum):
@@ -141,6 +150,8 @@ class TurnComplete:
     agent_response: str
     m_modifier: float
     tier_latencies: dict[str, float]
+    average_pitch: float = 0.0
+    was_interrupted: bool = False  # Q23/Q27: True if this turn was cut short by barge-in
 
     def to_dict(self) -> dict:
         """Convert to dictionary for serialization."""
@@ -150,7 +161,8 @@ class TurnComplete:
             "user_input": self.user_input,
             "agent_response": self.agent_response,
             "m_modifier": self.m_modifier,
-            "tier_latencies": self.tier_latencies
+            "tier_latencies": self.tier_latencies,
+            "average_pitch": self.average_pitch
         }
 
 
@@ -247,11 +259,16 @@ class StreamingSession:
 
         # Turn tracking
         self._current_turn_id: int = 0
-        self._current_chunk_index: int = 0
+        self._current_chunk_index: int = 0   # counts Gemini audio chunks received
+        self._send_chunk_index: int = 0       # counts user audio chunks sent (for logging)
         self._accumulated_user_input: str = ""
         self._accumulated_agent_response: str = ""
         self._turn_complete_fired: bool = False  # tracks late transcription
+        self._turn_lock = asyncio.Lock()  # Q5: serialize _handle_turn_complete
+        self._turn_was_interrupted: bool = False  # Q23/Q27: skip state update for interrupted turns
         self._activity_started: bool = False
+        self._user_pitch_sum: float = 0.0
+        self._user_pitch_count: int = 0
 
         # Tier latency tracking per turn
         self._tier_latencies: dict[str, float] = {}
@@ -264,11 +281,19 @@ class StreamingSession:
         # Session timing
         self._session_started_at: datetime | None = None
 
+        # Reconnect context callback — called after reconnect to inject
+        # compact state summary instead of losing all conversational context.
+        # Set by the orchestrator (WillowAgent) to provide last-3-turns + state.
+        self._reconnect_context_callback: Callable[[], Awaitable[str | None]] | None = None
+
         # Asyncio primitives
         self._receive_task: asyncio.Task | None = None
         self._duration_log_task: asyncio.Task | None = None
         self._stream_lock: asyncio.Lock = asyncio.Lock()
         self._shutdown_event: asyncio.Event = asyncio.Event()
+
+        # Voice zone tracking — default neutral_m / Leda
+        self._last_voice_zone: str = "neutral_m"
 
     @property
     def state(self) -> SessionState:
@@ -322,6 +347,48 @@ class StreamingSession:
             return (datetime.now(timezone.utc) - self._session_started_at).total_seconds()
         return 0.0
 
+    async def switch_voice_for_zone(self, zone: str) -> bool:
+        """
+        Send a mid-session voice switch when the behavioral zone changes.
+
+        Sends a setup message to the live session to update the voice without
+        requiring a full reconnect.  No-ops when zone has not changed.
+
+        Args:
+            zone: One of "high_m", "neutral_m", "low_m".
+
+        Returns:
+            True if a voice switch was sent, False if zone unchanged or session
+            is not connected.
+        """
+        if zone == self._last_voice_zone:
+            return False
+        new_voice = ZONE_VOICE_MAP.get(zone, "Leda")
+        if not self._live_session:
+            logger.warning("[VOICE] switch_voice_for_zone: no live session — skipping")
+            return False
+        try:
+            await self._live_session.send(
+                input={
+                    "setup": {
+                        "voice_config": {
+                            "prebuilt_voice_config": {
+                                "voice_name": new_voice
+                            }
+                        }
+                    }
+                }
+            )
+            logger.info(
+                "[VOICE] Zone %s → %s: switched voice to %s",
+                self._last_voice_zone, zone, new_voice,
+            )
+            self._last_voice_zone = zone
+            return True
+        except Exception as exc:
+            logger.warning("[VOICE] Voice switch failed (zone=%s voice=%s): %s", zone, new_voice, exc)
+            return False
+
     async def connect(self) -> None:
         """
         Establish connection to Gemini Live API.
@@ -356,10 +423,10 @@ class StreamingSession:
             # Configure live session for audio streaming with thinking support.
             live_config_kwargs = dict(
                 response_modalities=["AUDIO"],
-                thinking_config=genai_types.ThinkingConfig(
-                    thinking_level=genai_types.ThinkingLevel.MINIMAL,
-                    include_thoughts=True,
-                ),
+                # Do NOT include_thoughts=True with audio-only modality — requesting
+                # thought text when the response modality is AUDIO causes a conflict:
+                # Gemini tries to emit text thoughts but has no text output channel,
+                # which can silently block the entire response on the first turn.
                 speech_config=genai_types.SpeechConfig(
                     voice_config=genai_types.VoiceConfig(
                         prebuilt_voice_config=genai_types.PrebuiltVoiceConfig(
@@ -369,16 +436,23 @@ class StreamingSession:
                 ),
             )
             # Enable transcription for both input (user speech) and output (agent speech)
-            # so on_turn_complete receives real transcript text for the dashboard
+            # so on_turn_complete receives real transcript text for the dashboard.
+            # Try each independently — field names vary across SDK versions.
             try:
-                live_config_kwargs["input_audio_transcription"] = genai_types.InputAudioTranscription()
+                live_config_kwargs["input_audio_transcription"] = genai_types.AudioTranscriptionConfig()
+            except (AttributeError, TypeError):
+                logger.warning("[GEMINI] input_audio_transcription not available in this SDK version")
+            try:
                 live_config_kwargs["output_audio_transcription"] = genai_types.AudioTranscriptionConfig()
             except (AttributeError, TypeError):
-                logger.warning("[GEMINI] Audio transcription config not available in this SDK version")
+                logger.warning("[GEMINI] output_audio_transcription not available in this SDK version")
 
             # Inject persona system instruction if provided
             if self._system_instruction:
                 live_config_kwargs["system_instruction"] = self._system_instruction
+                logger.info(f"SYSTEM INSTRUCTION SENT:\n{self._system_instruction}")
+            logger.info(f"CONNECTING WITH MODEL: {self._model_id}")
+            logger.info(f"LIVE CONFIG KWARGS: {live_config_kwargs}")
             # Manual VAD: browser noise gate handles silence detection;
             # Python layer controls turn boundaries via activity_start/end.
             # Auto VAD (default): Gemini detects speech pauses automatically.
@@ -478,17 +552,26 @@ class StreamingSession:
             SessionExpiredError: If session has expired
         """
         if self.is_expired:
-            raise SessionExpiredError(f"Session {self.session_id} has expired")
+            logger.warning(f"[STREAM] Session {self.session_id} expired — dropping audio chunk")
+            return
 
         if not self.is_connected:
-            raise StreamingSessionError(
-                f"Cannot stream: session {self.session_id} is in state {self._state.value}"
+            # Session may be reconnecting — drop the chunk silently rather than
+            # raising, so the caller's loop stays alive across transient gaps.
+            logger.debug(
+                f"[STREAM] Session {self.session_id} not connected "
+                f"(state={self._state.value}) — dropping audio chunk"
             )
+            return
 
-        if not self._live_session:
-            raise StreamingSessionError(
-                f"Cannot stream: session {self.session_id} has no active live session"
-            )
+        # Capture live_session reference before acquiring lock.
+        # _reconnect_session() may replace self._live_session while we wait for
+        # the lock; using the captured reference ensures we don't call send on
+        # a partially-initialized new session.
+        live_session = self._live_session
+        if not live_session:
+            logger.debug(f"[STREAM] Session {self.session_id} has no live session — dropping chunk")
+            return
 
         async with self._stream_lock:
             self._state = SessionState.STREAMING
@@ -497,30 +580,48 @@ class StreamingSession:
                 # Manual VAD: signal activity start on first chunk of a turn.
                 # Auto VAD: Gemini detects speech boundaries; skip activity signals.
                 if not self._auto_vad and not self._activity_started:
-                    await self._live_session.send_realtime_input(
+                    await live_session.send_realtime_input(
                         activity_start=genai_types.ActivityStart()
                     )
                     self._activity_started = True
 
+                if audio_data:
+                    samples = struct.unpack(f"<{len(audio_data)//2}h", audio_data)
+                    zero_crossings = 0
+                    for i in range(1, len(samples)):
+                        if (samples[i-1] >= 0 and samples[i] < 0) or (samples[i-1] < 0 and samples[i] >= 0):
+                            zero_crossings += 1
+
+                    duration_seconds = len(audio_data) / (AUDIO_SAMPLE_RATE_HZ * 2)
+                    if duration_seconds > 0:
+                        pitch = (zero_crossings / 2.0) / duration_seconds
+                        if pitch > 0:
+                            self._user_pitch_sum += pitch
+                            self._user_pitch_count += 1
+
                 # Send audio data as realtime input
-                await self._live_session.send_realtime_input(
-                    media=genai_types.Blob(
+                await live_session.send_realtime_input(
+                    audio=genai_types.Blob(
                         data=audio_data,
                         mime_type="audio/pcm;rate=16000"
                     )
                 )
 
-                # Log every 50th chunk to avoid spam, but always log first chunk
-                if self._current_chunk_index == 0 or self._current_chunk_index % 50 == 0:
+                # Log every 50th sent chunk to avoid spam, but always log first chunk
+                if self._send_chunk_index == 0 or self._send_chunk_index % 50 == 0:
                     logger.info(
                         f"[STREAM] Session {self.session_id} streaming audio: "
-                        f"{len(audio_data)} bytes (chunk ~{self._current_chunk_index}, "
+                        f"{len(audio_data)} bytes (sent={self._send_chunk_index}, "
+                        f"recv_chunks={self._current_chunk_index}, "
                         f"state={self._state.value}, turn={self._current_turn_id})"
                     )
+                self._send_chunk_index += 1
 
             except Exception as e:
-                logger.error(f"Session {self.session_id} stream error: {e}")
-                raise StreamingSessionError(f"Failed to stream audio: {e}") from e
+                # Log but do NOT raise — a transient send error (e.g. Gemini
+                # reconnecting) must not propagate back to voice_stream_handler
+                # and kill the frontend WebSocket.
+                logger.warning(f"[STREAM] Session {self.session_id} audio send error: {e}")
 
     async def end_turn(self) -> None:
         """
@@ -533,32 +634,61 @@ class StreamingSession:
             StreamingSessionError: If session is not connected
         """
         if not self.is_connected or not self._live_session:
-            raise StreamingSessionError(
-                f"Cannot end turn: session {self.session_id} is not connected"
+            # Not an error — session may be reconnecting or already done.
+            logger.debug(
+                f"[STREAM] end_turn ignored: session {self.session_id} not connected "
+                f"(state={self._state.value})"
             )
+            return
 
         async with self._stream_lock:
             try:
                 if self._auto_vad:
-                    # Auto VAD: Gemini detects turn boundaries automatically.
-                    # Do NOT send audio_stream_end — it can terminate the entire
-                    # input stream, preventing subsequent turns. Just log it.
+                    # Auto VAD: Gemini detects speech end from the audio stream.
+                    # Do NOT send send_client_content(turn_complete=True) — that
+                    # creates a conflicting empty text-channel turn that can cause
+                    # Gemini to respond to nothing or generate a duplicate response.
+                    # Just reset local state; the mic gate in main.py stops audio.
                     logger.debug(
-                        f"Session {self.session_id} end_turn called in auto VAD mode "
-                        f"(no-op, Gemini handles turn detection)"
+                        f"Session {self.session_id} end_turn: auto-VAD mode, "
+                        f"no Gemini signal sent (mic gate handles silence)"
                     )
                 else:
-                    # Manual VAD: signal end of user speech activity
+                    # Manual VAD: explicitly signal end of user speech activity.
                     await self._live_session.send_realtime_input(
                         activity_end=genai_types.ActivityEnd()
                     )
-                self._activity_started = False
+                    logger.debug(f"Session {self.session_id} end_turn: sent ActivityEnd")
 
-                logger.debug(f"Session {self.session_id} signaled end of turn")
+                self._activity_started = False
+                self._send_chunk_index = 0
 
             except Exception as e:
-                logger.error(f"Session {self.session_id} end turn error: {e}")
-                raise StreamingSessionError(f"Failed to signal end of turn: {e}") from e
+                # Non-fatal — log and continue.
+                logger.warning(f"[STREAM] Session {self.session_id} end_turn error: {e}")
+
+    async def send(self, input: dict) -> None:
+        """
+        Send arbitrary input to the live session (e.g. vision frames).
+        
+        Args:
+            input: Dictionary containing mime_type and base64 encoded data.
+        """
+        if not self.is_connected or not self._live_session:
+            logger.warning("Cannot send input: session is not connected")
+            return
+            
+        try:
+            import base64
+            # Send as realtime input blob
+            await self._live_session.send_realtime_input(
+                video=genai_types.Blob(
+                    mime_type=input.get("mime_type", "image/jpeg"),
+                    data=base64.b64decode(input.get("data", ""))
+                )
+            )
+        except Exception as e:
+            logger.error(f"Failed to send input to Gemini: {e}")
 
     async def interrupt(self, reason: InterruptionReason = InterruptionReason.USER_SPEECH_DETECTED) -> None:
         """
@@ -579,6 +709,9 @@ class StreamingSession:
             )
 
         self._state = SessionState.INTERRUPTED
+        # Q23/Q27: Mark turn as interrupted so the subsequent turn_complete
+        # from Gemini doesn't inflate turn_count with a phantom turn.
+        self._turn_was_interrupted = True
 
         # Create interruption event
         interruption = Interruption(
@@ -591,6 +724,26 @@ class StreamingSession:
             f"reason={reason.value}"
         )
 
+        # Send network signal to Gemini to stop generation. Without this,
+        # Gemini's server ignores local state resets and keeps streaming audio.
+        # send_client_content(turn_complete=True) tells Gemini the current
+        # exchange is finished, halting server-side inference.
+        if self._live_session:
+            try:
+                await self._live_session.send_client_content(
+                    turns=[],
+                    turn_complete=True,
+                )
+                logger.debug(
+                    f"Session {self.session_id} sent turn_complete to cancel "
+                    f"server-side generation"
+                )
+            except Exception as e:
+                logger.warning(
+                    f"Session {self.session_id} failed to send cancellation "
+                    f"signal to Gemini: {e}"
+                )
+
         # Notify callback
         if self._on_interrupt:
             try:
@@ -602,6 +755,8 @@ class StreamingSession:
         self._current_chunk_index = 0
         self._accumulated_agent_response = ""
         self._activity_started = False
+        self._user_pitch_sum = 0.0
+        self._user_pitch_count = 0
         self._state = SessionState.CONNECTED
 
     async def _duration_log_loop(self) -> None:
@@ -628,6 +783,7 @@ class StreamingSession:
 
         The Gemini Live receive() iterator exhausts after each turn, so we
         wrap it in a while loop that re-enters receive() for the next turn.
+        If the connection drops, it attempts to reconnect with backoff.
         """
         if not self._live_session:
             logger.warning(f"[STREAM] Session {self.session_id} receive loop: no live session")
@@ -637,59 +793,77 @@ class StreamingSession:
 
         try:
             while not self._shutdown_event.is_set():
-                logger.info(
-                    f"[STREAM] Session {self.session_id} entering receive() "
-                    f"(turn={self._current_turn_id}, state={self._state.value})"
-                )
-
-                async for response in self._live_session.receive():
-                    # Check for shutdown
-                    if self._shutdown_event.is_set():
-                        logger.info(f"[STREAM] Session {self.session_id} loop exiting — shutdown requested")
-                        return
-
-                    # Identify event type for logging
-                    event_type = []
-                    if response.server_content:
-                        if response.server_content.model_turn:
-                            has_audio = any(
-                                p.inline_data for p in response.server_content.model_turn.parts
-                            )
-                            has_text = any(
-                                p.text for p in response.server_content.model_turn.parts
-                            )
-                            if has_audio:
-                                event_type.append("audio")
-                            if has_text:
-                                event_type.append("text")
-                        if response.server_content.turn_complete:
-                            event_type.append("turn_complete")
-                    if response.tool_call:
-                        event_type.append("tool_call")
-                    if not event_type:
-                        event_type.append("other")
-
+                try:
                     logger.info(
-                        f"[STREAM] Session {self.session_id} received: "
-                        f"{'+'.join(event_type)} (state={self._state.value})"
+                        f"[STREAM] Session {self.session_id} entering receive() "
+                        f"(turn={self._current_turn_id}, state={self._state.value})"
                     )
 
-                    # Process server content
-                    if response.server_content:
-                        await self._handle_server_content(response.server_content)
+                    async for response in self._live_session.receive():
+                        # Check for shutdown
+                        if self._shutdown_event.is_set():
+                            logger.info(f"[STREAM] Session {self.session_id} loop exiting — shutdown requested")
+                            return
 
-                    # Process tool calls if any (for future extensibility)
-                    if response.tool_call:
-                        logger.debug(
-                            f"Session {self.session_id} received tool call: {response.tool_call}"
+                        # Identify event type for logging
+                        event_type = []
+                        if response.server_content:
+                            if response.server_content.model_turn:
+                                has_audio = any(
+                                    p.inline_data for p in response.server_content.model_turn.parts
+                                )
+                                has_text = any(
+                                    p.text for p in response.server_content.model_turn.parts
+                                )
+                                if has_audio:
+                                    event_type.append("audio")
+                                if has_text:
+                                    event_type.append("text")
+                            if response.server_content.turn_complete:
+                                event_type.append("turn_complete")
+                        if response.tool_call:
+                            event_type.append("tool_call")
+                        if not event_type:
+                            event_type.append("other")
+
+                        logger.info(
+                            f"[STREAM] Session {self.session_id} received: "
+                            f"{'+'.join(event_type)} (state={self._state.value})"
                         )
+                        has_audio = False
+                        if response.server_content and response.server_content.model_turn:
+                            has_audio = any(p.inline_data for p in response.server_content.model_turn.parts)
+                        logger.info(f"RECEIVED: type={type(response)}, has_audio={has_audio}")
 
-                # receive() iterator exhausted — Gemini finished this turn's response.
-                # Re-enter receive() for the next turn.
-                logger.info(
-                    f"[STREAM] Session {self.session_id} receive() iterator exhausted "
-                    f"(turn={self._current_turn_id}) — re-entering for next turn"
-                )
+                        # Process server content
+                        if response.server_content:
+                            await self._handle_server_content(response.server_content)
+
+                        # Process tool calls if any (for future extensibility)
+                        if response.tool_call:
+                            logger.debug(
+                                f"Session {self.session_id} received tool call: {response.tool_call}"
+                            )
+
+                    # receive() iterator exhausted — Gemini finished this turn's response.
+                    # Wait for _handle_turn_complete (a create_task) to finish before
+                    # re-entering receive(), so the behavioral pipeline from turn N
+                    # completes before turn N+1 audio could arrive.
+                    await asyncio.sleep(0)   # yield to let pending tasks run
+                    logger.info(
+                        f"[STREAM] Session {self.session_id} receive() iterator exhausted "
+                        f"(turn={self._current_turn_id}) — re-entering for next turn"
+                    )
+
+                except (Exception, asyncio.CancelledError) as e:
+                    if isinstance(e, asyncio.CancelledError) or self._shutdown_event.is_set():
+                        raise
+                    
+                    logger.warning(f"[STREAM] Session {self.session_id} loop encountered error: {e}")
+                    if not await self._reconnect_session():
+                        logger.error(f"[STREAM] Session {self.session_id} reconnection failed permanently")
+                        self._state = SessionState.ERROR
+                        break
 
         except asyncio.CancelledError:
             logger.info(f"[STREAM] Session {self.session_id} loop exiting — cancelled")
@@ -697,6 +871,116 @@ class StreamingSession:
         except Exception as e:
             logger.error(f"[STREAM] Session {self.session_id} loop crashed: {e}")
             self._state = SessionState.ERROR
+
+    async def _reconnect_session(self) -> bool:
+        """
+        Attempt to re-establish the Gemini Live connection with exponential backoff.
+        
+        Returns:
+            True if reconnection succeeded, False otherwise.
+        """
+        if not self._client or self._shutdown_event.is_set():
+            return False
+
+        max_retries = 5
+        base_delay = 1.0
+        
+        self._state = SessionState.CONNECTING
+        
+        for attempt in range(max_retries):
+            if self._shutdown_event.is_set():
+                return False
+                
+            delay = base_delay * (2 ** attempt)
+            logger.info(f"[STREAM] Reconnecting session {self.session_id} (attempt {attempt+1}/{max_retries}) in {delay:.1f}s...")
+            await asyncio.sleep(delay)
+            
+            try:
+                # 1. Clean up old connection context
+                if self._exit_stack:
+                    await self._exit_stack.aclose()
+                self._exit_stack = AsyncExitStack()
+                
+                # 2. Re-setup live config (same as in connect())
+                live_config_kwargs = dict(
+                    response_modalities=["AUDIO"],
+                    speech_config=genai_types.SpeechConfig(
+                        voice_config=genai_types.VoiceConfig(
+                            prebuilt_voice_config=genai_types.PrebuiltVoiceConfig(
+                                voice_name=self._gemini_config.voice_name
+                            )
+                        )
+                    ),
+                )
+                try:
+                    live_config_kwargs["input_audio_transcription"] = genai_types.AudioTranscriptionConfig()
+                except (AttributeError, TypeError):
+                    pass
+                try:
+                    live_config_kwargs["output_audio_transcription"] = genai_types.AudioTranscriptionConfig()
+                except (AttributeError, TypeError):
+                    pass
+
+                if self._system_instruction:
+                    live_config_kwargs["system_instruction"] = self._system_instruction
+                if not self._auto_vad:
+                    live_config_kwargs["realtime_input_config"] = genai_types.RealtimeInputConfig(
+                        automatic_activity_detection=genai_types.AutomaticActivityDetection(
+                            disabled=True
+                        )
+                    )
+                live_config = genai_types.LiveConnectConfig(**live_config_kwargs)
+
+                # 3. Connect again — acquire _stream_lock before swapping
+                # _live_session so that any concurrent stream() call either
+                # sees the old session fully or the new one, never a half-
+                # replaced reference.
+                new_live_session = await self._exit_stack.enter_async_context(
+                    self._client.aio.live.connect(
+                        model=self._model_id,
+                        config=live_config
+                    )
+                )
+                async with self._stream_lock:
+                    self._live_session = new_live_session
+                    self._state = SessionState.CONNECTED
+                    # Reset in-flight turn state so reconnected session starts clean.
+                    self._accumulated_user_input = ""
+                    self._accumulated_agent_response = ""
+                    self._current_chunk_index = 0
+                    self._send_chunk_index = 0
+                    self._turn_complete_fired = False
+                    self._turn_was_interrupted = False
+                    self._activity_started = False
+
+                logger.info(f"[STREAM] Session {self.session_id} reconnected successfully")
+
+                # 4. Inject compact reconnect context (last 3 turns + state)
+                # instead of leaving Gemini with zero conversational memory.
+                if self._reconnect_context_callback:
+                    try:
+                        context = await self._reconnect_context_callback()
+                        if context:
+                            await self._live_session.send_client_content(
+                                turns=genai_types.Content(
+                                    role="user",
+                                    parts=[genai_types.Part(text=f"[SYS] {context}")],
+                                ),
+                                turn_complete=False,
+                            )
+                            context_tokens = len(context) // 4  # rough estimate
+                            logger.debug(
+                                "Reconnect context: ~%d tokens injected", context_tokens
+                            )
+                    except Exception as ctx_err:
+                        logger.warning(f"[STREAM] Reconnect context injection failed: {ctx_err}")
+
+                return True
+
+            except Exception as e:
+                logger.warning(f"[STREAM] Reconnection attempt {attempt+1} failed: {e}")
+
+        return False
 
     async def _handle_server_content(self, server_content: genai_types.LiveServerContent) -> None:
         """
@@ -767,7 +1051,7 @@ class StreamingSession:
 
         # Check for turn completion
         if server_content.turn_complete:
-            await self._handle_turn_complete()
+            asyncio.create_task(self._handle_turn_complete())
 
     async def _handle_audio_data(self, audio_bytes: bytes) -> None:
         """
@@ -798,47 +1082,59 @@ class StreamingSession:
         Process turn completion signal from Gemini.
 
         Creates TurnComplete event with accumulated data and invokes callback.
+        Serialized via asyncio.Lock to prevent concurrent turn_complete
+        messages from corrupting turn_count and current_m (Q5).
         """
-        # Mark final chunk
-        if self._on_audio_chunk:
-            final_chunk = AudioChunk(
-                audio_data="",
-                chunk_index=self._current_chunk_index,
-                is_final=True
+        async with self._turn_lock:
+            self._turn_complete_fired = True
+
+            # Mark final chunk
+            if self._on_audio_chunk:
+                final_chunk = AudioChunk(
+                    audio_data="",
+                    chunk_index=self._current_chunk_index,
+                    is_final=True
+                )
+                try:
+                    await self._on_audio_chunk(final_chunk)
+                except Exception as e:
+                    logger.error(f"Final audio chunk callback error: {e}")
+
+            # Create turn complete event
+            average_pitch = self._user_pitch_sum / self._user_pitch_count if self._user_pitch_count > 0 else 0.0
+            turn_complete = TurnComplete(
+                turn_id=self._current_turn_id,
+                user_input=self._accumulated_user_input,
+                agent_response=self._accumulated_agent_response,
+                m_modifier=0.0,  # Will be set by tier processing
+                tier_latencies=self._tier_latencies.copy(),
+                average_pitch=average_pitch,
+                was_interrupted=self._turn_was_interrupted,
             )
-            try:
-                await self._on_audio_chunk(final_chunk)
-            except Exception as e:
-                logger.error(f"Final audio chunk callback error: {e}")
 
-        # Create turn complete event
-        turn_complete = TurnComplete(
-            turn_id=self._current_turn_id,
-            user_input=self._accumulated_user_input,
-            agent_response=self._accumulated_agent_response,
-            m_modifier=0.0,  # Will be set by tier processing
-            tier_latencies=self._tier_latencies.copy()
-        )
+            logger.info(
+                f"Session {self.session_id} turn {self._current_turn_id} complete: "
+                f"user_input_len={len(self._accumulated_user_input)}, "
+                f"response_len={len(self._accumulated_agent_response)}"
+            )
 
-        logger.info(
-            f"Session {self.session_id} turn {self._current_turn_id} complete: "
-            f"user_input_len={len(self._accumulated_user_input)}, "
-            f"response_len={len(self._accumulated_agent_response)}"
-        )
+            # Invoke callback
+            if self._on_turn_complete:
+                try:
+                    await self._on_turn_complete(turn_complete)
+                except Exception as e:
+                    logger.error(f"Turn complete callback error: {e}")
 
-        # Invoke callback
-        if self._on_turn_complete:
-            try:
-                await self._on_turn_complete(turn_complete)
-            except Exception as e:
-                logger.error(f"Turn complete callback error: {e}")
-
-        # Reset for next turn
-        self._current_turn_id += 1
-        self._current_chunk_index = 0
-        self._accumulated_user_input = ""
-        self._accumulated_agent_response = ""
-        self._activity_started = False
+            # Reset for next turn
+            self._current_turn_id += 1
+            self._current_chunk_index = 0
+            self._accumulated_user_input = ""
+            self._accumulated_agent_response = ""
+            self._turn_complete_fired = False
+            self._turn_was_interrupted = False
+            self._activity_started = False
+        self._user_pitch_sum = 0.0
+        self._user_pitch_count = 0
         self._tier_latencies = {}
         self._state = SessionState.CONNECTED
         logger.info(
@@ -904,6 +1200,7 @@ class StreamingSession:
         Args:
             directive: Behavioral instruction (e.g., m-zone style directive)
         """
+        logger.info(f"INJECTING: zone=N/A, directive='{directive[:100]}'")
         if not self._live_session:
             logger.warning("[GEMINI] Cannot inject context: no live session")
             return
@@ -911,7 +1208,7 @@ class StreamingSession:
             await self._live_session.send_client_content(
                 turns=genai_types.Content(
                     role="user",
-                    parts=[genai_types.Part(text=f"[SYSTEM CONTEXT — not user speech] {directive}")],
+                    parts=[genai_types.Part(text=f"[SYS] {directive}")],
                 ),
                 turn_complete=False,
             )
@@ -946,7 +1243,7 @@ class StreamingSession:
 async def create_session(
     gemini_config: GeminiConfig | None = None,
     session_config: SessionConfig | None = None,
-    model_id: str = "gemini-2.0-flash-exp"
+    model_id: str | None = None
 ) -> StreamingSession:
     """
     Factory function to create and connect a StreamingSession.

@@ -19,48 +19,44 @@ from google.genai import types as genai_types
 
 
 class TestThinkingConfigInLiveConnectConfig:
-    """Verify ThinkingConfig is set correctly at session initialization."""
+    """Verify ThinkingConfig is NOT set in audio-only sessions."""
 
     @pytest.mark.asyncio
-    async def test_thinking_config_in_live_connect_config(self):
-        """ThinkingConfig should be MINIMAL with include_thoughts=True."""
+    async def test_thinking_config_absent_in_audio_only_mode(self):
+        """thinking_config must be absent when response_modalities=["AUDIO"].
+
+        include_thoughts=True with audio-only modality causes a conflict:
+        Gemini tries to emit thought text into a stream that only accepts
+        audio, which can silently block the first response entirely.
+        """
         from src.config import GeminiConfig
         from src.voice.gemini_live import StreamingSession
 
         session = StreamingSession(
             gemini_config=GeminiConfig(
                 api_key="test-key",
-                model_id="gemini-2.5-flash-preview-04-17"
+                model_id="gemini-2.5-flash-native-audio-preview-12-2025"
             )
         )
 
-        # Mock the client and live connection
+        captured_config = {}
         mock_client = MagicMock()
         mock_live_session = AsyncMock()
-
-        # Capture the config passed to connect
-        captured_config = {}
-
-        async def mock_connect_cm(model, config):
-            captured_config['model'] = model
-            captured_config['config'] = config
-            # Return an async context manager that yields mock_live_session
-            cm = AsyncMock()
-            cm.__aenter__ = AsyncMock(return_value=mock_live_session)
-            cm.__aexit__ = AsyncMock(return_value=False)
-            return cm
-
-        mock_client.aio.live.connect = lambda model, config: _FakeAsyncCM(mock_live_session, model, config, captured_config)
+        mock_client.aio.live.connect = lambda model, config: _FakeAsyncCM(
+            mock_live_session, model, config, captured_config
+        )
 
         with patch('src.voice.gemini_live.genai.Client', return_value=mock_client):
             await session.connect()
 
-        # Verify thinking config
         live_config = captured_config.get('config')
         assert live_config is not None
-        assert live_config.thinking_config is not None
-        assert live_config.thinking_config.thinking_level == genai_types.ThinkingLevel.MINIMAL
-        assert live_config.thinking_config.include_thoughts is True
+        # thinking_config must be absent — setting it with AUDIO-only modality
+        # causes Gemini to silently drop the first response.
+        assert live_config.thinking_config is None, (
+            "thinking_config must not be set in audio-only mode "
+            "(modality conflict blocks Gemini responses)"
+        )
 
         await session.disconnect()
 

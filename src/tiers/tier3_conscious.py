@@ -71,6 +71,26 @@ def _load_m_modifiers() -> dict[str, float]:
         return fallback
 
 @lru_cache(maxsize=1)
+def _load_tone_signals() -> dict[str, list[str]]:
+    """Load tone classification signals from willow_persona.json."""
+    persona_path = Path(__file__).parent.parent.parent / "data" / "willow_persona.json"
+    fallback: dict[str, list[str]] = {
+        "aggressive": ["shut up", "stupid", "idiot", "wtf", "!!!!"],
+        "sarcastic": ["oh really", "sure", "yeah right", "obviously"],
+        "warm": ["thank", "love", "appreciate", "amazing", "wonderful"],
+        "casual": ["hey", "hi", "lol", "haha", "cool", "awesome", "yeah"],
+    }
+    try:
+        with open(persona_path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+            signals = data.get("tone_signals", {})
+            return {k: v for k, v in signals.items() if k != "note" and isinstance(v, list)}
+    except (FileNotFoundError, json.JSONDecodeError) as e:
+        logger.warning("Failed to load tone_signals from willow_persona.json: %s", e)
+        return fallback
+
+
+@lru_cache(maxsize=1)
 def _load_intent_keywords() -> dict[str, list[str]]:
     """Load intent keywords from willow_keywords.json."""
     keywords_path = Path(__file__).parent.parent.parent / "data" / "willow_keywords.json"
@@ -119,6 +139,7 @@ class Tier3Result:
     is_sovereign_spike: bool = False
     tier_trigger: Optional[TierTrigger] = None
     behavioral_note: Optional[str] = None  # From willow_rules.json (Fix 1)
+    detected_tactic_key: Optional[str] = None  # Resolved key (may differ from raw tactic, e.g. contextual_sarcasm_malice)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -185,7 +206,7 @@ class Tier3Conscious:
 
         return "neutral"
 
-    def _classify_tone(self, user_input: str) -> ToneType:
+    def _classify_tone(self, user_input: str, average_pitch: float = 0.0) -> ToneType:
         """
         Fast tone heuristics (reflexive layer, separate from intent).
 
@@ -194,32 +215,47 @@ class Tier3Conscious:
 
         Args:
             user_input: Raw user text.
+            average_pitch: Average audio pitch (Hz) of the user turn.
 
         Returns:
             ToneType classification.
         """
         input_lower = user_input.lower()
+        signals = _load_tone_signals()
 
-        # Aggressive: confrontational patterns
-        if any(w in input_lower for w in ("shut up", "stupid", "idiot", "wtf", "!!!!")):
-            return "aggressive"
+        # Step 1: Text-based heuristics
+        text_tone: ToneType = "formal"
+        if any(w in input_lower for w in signals.get("aggressive", [])):
+            text_tone = "aggressive"
+        elif re.search(r"[?!]{2,}", user_input) or re.search(r"[A-Z]{4,}", user_input):
+            text_tone = "aggressive"
+        elif any(w in input_lower for w in signals.get("sarcastic", [])):
+            text_tone = "sarcastic"
+        elif any(w in input_lower for w in signals.get("warm", [])):
+            text_tone = "warm"
+        elif any(w in input_lower for w in signals.get("casual", [])):
+            text_tone = "casual"
 
-        if re.search(r"[?!]{2,}", user_input) or re.search(r"[A-Z]{4,}", user_input):
-            return "aggressive"
+        # Step 2: Pitch-based modulation (FR-012)
+        # Use real vocal frequency to refine text-only analysis.
+        if average_pitch > 0.0:
+            if average_pitch > 300.0:
+                # High pitch often implies escalation/aggression, overriding casual text
+                if text_tone not in ("warm", "aggressive"):
+                    logger.info("Pitch %.1fHz shifted tone %s -> aggressive", average_pitch, text_tone)
+                    return "aggressive"
+            elif average_pitch > 250.0:
+                # Elevated pitch: shift neutral/formal to warm if no negative text
+                if text_tone == "formal":
+                    logger.info("Pitch %.1fHz shifted tone %s -> warm", average_pitch, text_tone)
+                    return "warm"
+            elif average_pitch < 100.0:
+                # Deep/slow pitch: shift casual to formal/serious
+                if text_tone == "casual":
+                    logger.info("Pitch %.1fHz shifted tone %s -> formal", average_pitch, text_tone)
+                    return "formal"
 
-        # Sarcastic: irony markers
-        if any(w in input_lower for w in ("oh really", "sure", "yeah right", "obviously")):
-            return "sarcastic"
-
-        # Warm: positive markers
-        if any(w in input_lower for w in ("thank", "love", "appreciate", "amazing", "wonderful")):
-            return "warm"
-
-        # Casual: informal markers
-        if any(w in input_lower for w in ("hey", "hi", "lol", "haha", "cool", "awesome", "yeah")):
-            return "casual"
-
-        return "formal"
+        return text_tone
 
     def _build_rationale(
         self,
@@ -289,6 +325,7 @@ class Tier3Conscious:
         recent_agent_responses: Optional[list[str]] = None,
         conversation_history: Optional[list[dict]] = None,
         thought_tag_data: Optional[dict[str, Any]] = None,
+        average_pitch: float = 0.0,
     ) -> Tier3Result:
         """
         Full Tier 3 Conscious processing pipeline.
@@ -308,6 +345,7 @@ class Tier3Conscious:
             recent_agent_responses: Agent's recent responses for mirroring check.
             conversation_history: Prior turns for context-sensitive detectors.
             thought_tag_data: Parsed [THOUGHT] tag dict from T040, or None.
+            average_pitch: Average audio pitch (Hz) of the user turn.
 
         Returns:
             Tier3Result with ThoughtSignature and timing info.
@@ -323,10 +361,10 @@ class Tier3Conscious:
         intent = self._classify_intent(user_input)
 
         # Step 2: Tone classification
-        tone = self._classify_tone(user_input)
+        tone = self._classify_tone(user_input, average_pitch=average_pitch)
 
-        # Step 3: Tactic detection
-        tactic_result = self._detector.detect(
+        # Step 3: Tactic detection (async — semantic fallback uses executor + timeout)
+        tactic_result = await self._detector.detect(
             user_input=user_input,
             recent_agent_responses=recent_agent_responses,
             conversation_history=conversation_history,
@@ -338,14 +376,19 @@ class Tier3Conscious:
 
         # Step 4b: Look up behavioral note from willow_rules.json (Fix 1)
         behavioral_note: Optional[str] = None
+        resolved_tactic_key: Optional[str] = None
         if tactic_result.tactic:
             rules = _load_rules()
             tactic_key = tactic_result.tactic
             if tactic_result.is_malice and tactic_key == "contextual_sarcasm":
                 tactic_key = "contextual_sarcasm_malice"
             rule_entry = rules.get("tactics", {}).get(tactic_key, {})
-            if rule_entry.get("response"):
-                behavioral_note = rule_entry["response"]
+            if not rule_entry:
+                # Fall back to situations section (e.g. sincere_pivot, casual_invite)
+                rule_entry = rules.get("situations", {}).get(tactic_key, {})
+            if rule_entry.get("behavioral_note"):
+                behavioral_note = rule_entry["behavioral_note"]
+                resolved_tactic_key = tactic_key
                 logger.debug(
                     "Behavioral note from rules: tactic=%s note=%r",
                     tactic_key, behavioral_note,
@@ -353,8 +396,10 @@ class Tier3Conscious:
 
         # Step 5: Build ThoughtSignature
         m_modifiers = _load_m_modifiers()
-        m_modifier = m_modifiers.get(intent, 0.0)
         is_sovereign_spike = intent == "devaluing"
+        # Use sovereign_spike key for devaluing so Tier 3 agrees with Tier 2.
+        # Both tiers read the same JSON value → retroactive_correct delta = 0 → no erasure.
+        m_modifier = m_modifiers.get("sovereign_spike", -5.0) if is_sovereign_spike else m_modifiers.get(intent, 0.0)
         tier_trigger = 4 if is_sovereign_spike else (3 if tactic_result.tactic else 2)
 
         rationale = self._build_rationale(intent, tone, tactic_result)
@@ -414,6 +459,7 @@ class Tier3Conscious:
             is_sovereign_spike=is_sovereign_spike,
             tier_trigger=tier_trigger_record,
             behavioral_note=behavioral_note,
+            detected_tactic_key=resolved_tactic_key,
         )
 
 

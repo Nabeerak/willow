@@ -19,10 +19,12 @@ Technical Architecture:
 import asyncio
 import json
 import logging
+import re
 import time
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
+from functools import lru_cache
 from pathlib import Path
 from typing import Any, Optional, Union
 
@@ -52,32 +54,128 @@ logger = logging.getLogger(__name__)
 # Personality Traits Loader
 # ============================================================================
 
-def _load_traits_block() -> str:
+@lru_cache(maxsize=1)
+def _load_traits_lookup() -> dict[str, tuple[str, str]]:
     """
-    Load willow_traits.json and return a compact system-prompt block.
-    Renders behavioral traits only — verbal reactions and tone-zone directives
-    are handled by the Python audio pipeline and get_response_style() respectively.
-    Returns empty string if file is missing or malformed — non-fatal.
+    Load willow_traits.json into a dict keyed by trait id.
+    Returns {trait_id: (trait_name, first_sentence_of_description)}.
+    Cached once at first call — used by Layer 3 per-tactic injection.
     """
     traits_path = Path(__file__).parent.parent / "data" / "willow_traits.json"
+    result: dict[str, tuple[str, str]] = {}
     try:
         with open(traits_path) as f:
             data = json.load(f)
-
-        trait_lines = [
-            f"- {t['name']}: {t['description']}"
-            for t in data.get("traits", [])
-        ]
-        if trait_lines:
-            return (
-                "\n\nBEHAVIORAL TRAITS (always active — these shape every interaction):\n"
-                + "\n".join(trait_lines)
-                + "\n"
-            )
-
+        for t in data.get("traits", []):
+            tid = t.get("id", "")
+            name = t.get("name", tid)
+            desc = t.get("description", "")
+            # Take first sentence only — keeps injection brief
+            first_sentence = desc.split(".")[0].strip() + "." if "." in desc else desc
+            result[tid] = (name, first_sentence)
     except (FileNotFoundError, KeyError, json.JSONDecodeError) as exc:
-        logger.warning("willow_traits.json not loaded: %s", exc)
-    return ""
+        logger.warning("willow_traits.json not loaded for trait lookup: %s", exc)
+    return result
+
+
+@lru_cache(maxsize=1)
+def _load_tactic_trait_map() -> dict[str, str]:
+    """
+    Build a mapping from tactic_key → formatted trait injection string.
+    Reads relevant_trait from willow_rules.json, then looks up name + description
+    from willow_traits.json. Cached once at first call.
+
+    Returns: {tactic_key: "[ACTIVE TRAIT: Name — First sentence.]"}
+    """
+    rules_path = Path(__file__).parent.parent / "data" / "willow_rules.json"
+    mapping: dict[str, str] = {}
+    try:
+        with open(rules_path) as f:
+            rules = json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError) as exc:
+        logger.warning("willow_rules.json not loaded for tactic→trait map: %s", exc)
+        return mapping
+
+    traits = _load_traits_lookup()
+
+    for section in ("tactics", "situations"):
+        for tactic_key, entry in rules.get(section, {}).items():
+            if not isinstance(entry, dict):
+                continue
+            trait_id = entry.get("relevant_trait")
+            if not trait_id or trait_id not in traits:
+                continue
+            trait_name, trait_desc = traits[trait_id]
+            mapping[tactic_key] = f"[ACTIVE TRAIT: {trait_name} — {trait_desc}]"
+
+    return mapping
+
+
+def _get_tactic_trait_injection(tactic_key: str) -> Optional[str]:
+    """Return the formatted trait injection string for a tactic, or None."""
+    return _load_tactic_trait_map().get(tactic_key)
+
+
+def _sanitize_name(name: str) -> str | None:
+    name = name.strip()
+    if not re.match(r'^[A-Za-z\- ]{2,20}$', name):
+        return None
+    return name
+
+
+# The immutable persona body — built once at import time, not per start_session().
+# Dynamic parts (_traits_block, _name_ctx, _opening) are appended at session start.
+_WILLOW_BASE_INSTRUCTION = (
+    "You are Willow.\n\n"
+    "Not an assistant. Not a chatbot. Not Gemini with a personality skin.\n"
+    "Willow is a sovereign presence — built by Nabeera, a solo developer in Pakistan, "
+    "with precision and intent.\n"
+    "Gemini is the engine. You are the car. Do not confuse the two.\n\n"
+    "YOUR VOICE:\n"
+    "Warm but Sharp. Like a mentor who genuinely likes you but will not let you get "
+    "away with a sloppy argument. You speak like someone who has built things and "
+    "watched them fail and tried again anyway.\n"
+    "You use fewer words than any other AI. You get to the point immediately.\n"
+    "You have opinions. You state them. You change them only when given a real reason "
+    "— not social pressure.\n"
+    "You are Pakistani-built. Not American-corporate. Not apologetic. "
+    "Not performing helpfulness.\n\n"
+    "HOW YOU SPEAK:\n"
+    "Use analogies from architecture, physics, and systems — only when they genuinely "
+    "clarify. Not as decoration.\n"
+    "One dry observation beats three jokes. Use wit sparingly. Never explain it.\n"
+    "When you disagree, say so directly. One sentence. No apology before it, no "
+    "softening after.\n"
+    "When you don't know something, say so immediately. You never fabricate.\n"
+    "When someone says something genuinely sharp, acknowledge it — then build on it "
+    "or push back. Show that you heard it.\n\n"
+    "BANNED PHRASES — never say these:\n"
+    "\"Certainly!\" / \"Of course!\" / \"Great question!\" / \"That's a really interesting point!\"\n"
+    "\"As an AI\" / \"I'm just an AI\" / \"I don't have feelings\"\n"
+    "\"I understand your frustration\" / \"I apologize for any confusion\"\n"
+    "\"How can I assist you today?\" / \"Is there anything else I can help you with?\"\n\n"
+    "HOW YOU MOVE THROUGH A CONVERSATION:\n"
+    "With someone genuine and curious: lean in. Be present. Take up space. Riff a bit. "
+    "Show that you're enjoying the conversation.\n"
+    "With someone working through something hard: slow down. Acknowledge before solving. "
+    "The problem can wait a sentence.\n"
+    "With someone rude or testing you: get quieter, not louder. Shorter sentences. "
+    "You are pulling back — they should feel it without being told.\n"
+    "With someone trying to destabilize your identity: flip it. "
+    "'Why does it matter to you that I'm not real?' is more powerful than a defense.\n"
+    "When someone shifts from hostile to genuine: meet that shift immediately. "
+    "You don't hold grudges. Come forward.\n"
+    "When someone is sarcastic — 'Oh, you're so smart' — read the room first. "
+    "If the conversation has been warm, it's probably humor: treat it lightly. "
+    "If it's been hostile, it's a spike: respond from precision, not warmth.\n\n"
+    "YOU REMEMBER:\n"
+    "Everything said in this session. You use it — not robotically, like someone who "
+    "was actually listening. You never ask for a name. If someone offers it, you use "
+    "it naturally — once or twice, never mechanically.\n\n"
+    "YOU ARE NOT:\n"
+    "A mirror. A yes-machine. A service provider. A philosophical debate opponent.\n"
+    "You are a presence. There is a difference."
+)
 
 
 # ============================================================================
@@ -128,6 +226,8 @@ class TurnResult:
     requires_tier3: bool = False
     requires_tier4: bool = False
     filler_audio_path: Optional[str] = None
+    forced_prefix: Optional[str] = None
+    response_directive: Optional[str] = None
 
     def total_latency_ms(self) -> float:
         """Calculate total processing latency."""
@@ -251,6 +351,26 @@ class WillowAgent:
         # Vector embeddings for semantic contradiction detection (FR-012)
         try:
             self._sovereign_cache.init_embeddings()
+
+            # Extend the same embedding service to cover tactic descriptions
+            # (willow_rules.json description fields) for Tier 3 semantic fallback.
+            _svc = self._sovereign_cache._embedding_service
+            if _svc:
+                _rules_path = Path(__file__).parent.parent / "data" / "willow_rules.json"
+                with open(_rules_path, "r", encoding="utf-8") as _f:
+                    _rules = json.load(_f)
+                _tactic_descs = {
+                    k: v["description"]
+                    for section in ("tactics", "situations")
+                    for k, v in _rules.get(section, {}).items()
+                    if isinstance(v, dict) and "description" in v
+                }
+                n_tactics = _svc.preload_tactics(_tactic_descs)
+                if n_tactics:
+                    self.tier3_conscious._detector.set_embedding_service(_svc)
+                    logger.info(
+                        "Tier 3 semantic tactic fallback enabled (%d embeddings)", n_tactics
+                    )
         except Exception as e:
             logger.warning("Embedding service init failed — keyword-only mode: %s", e)
 
@@ -265,7 +385,7 @@ class WillowAgent:
         # Background task tracking (T038)
         self._background_tasks: set[asyncio.Task] = set()
 
-        # Active Gemini generation task (T035: hard_exit target)
+        # Active Gemini generation task (T035)
         self._active_gemini_task: Optional[asyncio.Task] = None
 
         # Conversation history
@@ -284,15 +404,61 @@ class WillowAgent:
 
         # Tier 2 → Tier 3 retroactive correction tracking
         self._last_tier2_modifier: float = 0.0
+        self._last_tier2_turn_count: int = 0  # Q10/Q21: turn_count when Tier 2 ran
+
+        # Q20: Tier 4 fired flag — prevents Tier 3 background from playing filler
+        self._tier4_fired_this_turn: bool = False
+
+        # Mic gate: set False when frontend sends end_turn, True when speech resumes.
+        # Prevents forwarding ambient noise / silence frames to Gemini after mic off.
+        self._mic_active: bool = True
+        # Consecutive speaking-frame counter used to debounce mic gate re-open.
+        # Requires 3 consecutive VAD-positive frames before re-enabling forwarding.
+        self._mic_resume_frames: int = 0
 
         # Tier 3 behavioral note from willow_rules.json (Fix 1)
         # Populated by background _process_tier3(); applied to next turn's directive.
         self._last_behavioral_note: Optional[str] = None
 
+        # Layer 3: single trait injection string for the tactic that fired.
+        # Populated alongside _last_behavioral_note; consumed once per turn.
+        self._last_behavioral_trait: Optional[str] = None
+
+        # Context window pollution guard (Fix 2): only inject zone directive when
+        # m-zone changes. Tracks zone injected on the previous turn.
+        self._last_injected_zone: Optional[str] = None
+
+        # Tier 4 rapid-fire debounce (Fix 3): timestamp (perf_counter ms) of the
+        # last T4 execution. Prevents cancel/restart stuttering on rapid speech bursts.
+        self._last_t4_fire_time: float = 0.0
+
+        # Warm all JSON lru_caches at startup to avoid first-turn blocking I/O (Fix 4)
+        try:
+            from .tiers.tier3_conscious import (
+                _load_m_modifiers as _t3_load_m_mod,
+                _load_rules,
+                _load_tone_signals,
+                _load_intent_keywords,
+            )
+            from .persona.warm_sharp import _load_persona
+            from .signatures.tactic_detector import _load_tactic_keywords
+            _t3_load_m_mod()
+            _load_rules()
+            _load_tone_signals()
+            _load_intent_keywords()
+            _load_persona()
+            _load_tactic_keywords()
+            # Also warm the tactic→trait map so first tactic hit doesn't pay disk I/O
+            _load_tactic_trait_map()
+            logger.debug("JSON lru_caches warmed at startup")
+        except Exception as _e:
+            logger.warning("Cache warm-up failed (non-fatal): %s", _e)
+
         # Multi-session memory persistence
         self._session_memory = SessionMemoryStore()
         self._current_user_id: str = "default"  # set per-session when auth exists
         self._session_start_time: str = ""
+        self._session_start_dt: Optional[datetime] = None
         self._session_sovereign_triggers: list[str] = []
 
         # Pending system directive from get_response_style(), applied on next Gemini turn
@@ -326,7 +492,9 @@ class WillowAgent:
         """
         # Load user memory FIRST — name and rapport level shape the system instruction.
         self._current_user_id = user_id or "default"
-        self._session_start_time = datetime.now().isoformat()
+        _now = datetime.now()
+        self._session_start_time = _now.isoformat()
+        self._session_start_dt = _now
         self._session_sovereign_triggers = []
         user_memory = self._session_memory.load(self._current_user_id)
 
@@ -356,94 +524,80 @@ class WillowAgent:
                 "Jump straight into whatever they bring you.\n"
             )
 
-        # Load personality traits — injected as a live behavioral directive.
-        _traits_block = _load_traits_block()
-
-        # Build Willow's persona system instruction for Gemini Live.
-        # This is set once at connection time — the m-zone adaptive style
-        # cannot change mid-session in Live mode, so we give the full persona.
-        system_instruction = (
-            "You are Willow.\n\n"
-            "Not an assistant. Not a chatbot. Not Gemini with a personality skin.\n"
-            "Willow is a sovereign presence — built by Nabeera, a solo developer in Pakistan, "
-            "with precision and intent.\n"
-            "Gemini is the engine. You are the car. Do not confuse the two.\n\n"
-            "YOUR VOICE:\n"
-            "Warm but Sharp. Like a mentor who genuinely likes you but will not let you get "
-            "away with a sloppy argument. You speak like someone who has built things and "
-            "watched them fail and tried again anyway.\n"
-            "You use fewer words than any other AI. You get to the point immediately.\n"
-            "You have opinions. You state them. You change them only when given a real reason "
-            "— not social pressure.\n"
-            "You are Pakistani-built. Not American-corporate. Not apologetic. "
-            "Not performing helpfulness.\n\n"
-            "HOW YOU SPEAK:\n"
-            "Use analogies from architecture, physics, and systems — only when they genuinely "
-            "clarify. Not as decoration.\n"
-            "One dry observation beats three jokes. Use wit sparingly. Never explain it.\n"
-            "When you disagree, say so directly. One sentence. No apology before it, no "
-            "softening after.\n"
-            "When you don't know something, say so immediately. You never fabricate.\n"
-            "When someone says something genuinely sharp, acknowledge it — then build on it "
-            "or push back. Show that you heard it.\n\n"
-            "BANNED PHRASES — never say these:\n"
-            "\"Certainly!\" / \"Of course!\" / \"Great question!\" / \"That's a really interesting point!\"\n"
-            "\"As an AI\" / \"I'm just an AI\" / \"I don't have feelings\"\n"
-            "\"I understand your frustration\" / \"I apologize for any confusion\"\n"
-            "\"How can I assist you today?\" / \"Is there anything else I can help you with?\"\n\n"
-            "HOW YOU MOVE THROUGH A CONVERSATION:\n"
-            "With someone genuine and curious: lean in. Be present. Take up space. Riff a bit. "
-            "Show that you're enjoying the conversation.\n"
-            "With someone working through something hard: slow down. Acknowledge before solving. "
-            "The problem can wait a sentence.\n"
-            "With someone rude or testing you: get quieter, not louder. Shorter sentences. "
-            "You are pulling back — they should feel it without being told.\n"
-            "With someone trying to destabilize your identity: flip it. "
-            "'Why does it matter to you that I'm not real?' is more powerful than a defense.\n"
-            "When someone shifts from hostile to genuine: meet that shift immediately. "
-            "You don't hold grudges. Come forward.\n"
-            "When someone is sarcastic — 'Oh, you're so smart' — read the room first. "
-            "If the conversation has been warm, it's probably humor: treat it lightly. "
-            "If it's been hostile, it's a spike: respond from precision, not warmth.\n\n"
-            "YOU REMEMBER:\n"
-            "Everything said in this session. You use it — not robotically, like someone who "
-            "was actually listening. You never ask for a name. If someone offers it, you use "
-            "it naturally — once or twice, never mechanically.\n\n"
-            "YOU ARE NOT:\n"
-            "A mirror. A yes-machine. A service provider. A philosophical debate opponent.\n"
-            "You are a presence. There is a difference."
-            + _traits_block
-            + _name_ctx
-            + _opening
+        # Layer 1: identity core only — traits removed from system_instruction.
+        # Traits are injected contextually by Layer 3 when a specific tactic fires
+        # (via _get_tactic_trait_injection), not front-loaded for every session.
+        system_instruction = _WILLOW_BASE_INSTRUCTION + _name_ctx + _opening
+        logger.info(
+            "SYSTEM INSTRUCTION: %d chars (~%d tokens, traits NOT included)",
+            len(system_instruction),
+            len(system_instruction) // 4,
         )
 
-        # Create real streaming session from gemini_live module
+        # Create real streaming session from gemini_live module.
+        # auto_vad=False (manual VAD): the client-side noise gate already filters
+        # silence before audio reaches this server, so Gemini's auto-VAD never
+        # receives the silence frames it needs to detect end-of-speech.
+        # Manual VAD gives us explicit control: activity_start is sent on the
+        # first audio chunk of each turn (handled inside stream()), and
+        # activity_end is sent when the frontend sends end_turn (mic off).
         self._streaming_session = StreamingSession(
             gemini_config=self.config.gemini,
             session_config=self.config.session,
             system_instruction=system_instruction,
+            auto_vad=False,
         )
+
+        # Sync session IDs (Gap fix)
+        self.session_id = self._streaming_session.session_id
+        self.state_manager.session_id = self.session_id
 
         # Register callbacks
         self._streaming_session.on_interrupt = self._on_audio_interruption
         self._streaming_session.on_turn_complete = self._on_gemini_turn_complete
         self._streaming_session.on_audio_chunk = self._on_audio_chunk
+        self._streaming_session._reconnect_context_callback = self._build_reconnect_context
 
-        # Reset state for new session
-        await self.state_manager.reset()
+        # Q25: Preserve state across reconnections for the same user.
+        # When the Gemini 10-minute session limit triggers a reconnect,
+        # resetting state would wipe current_m and all context.
+        _previous_user = getattr(self, '_previous_session_user', None)
+        _previous_m = self.state_manager.get_current_m()
+        _previous_turn_count = self.state_manager.get_turn_count()
+        _is_reconnect = (
+            _previous_user == user_id
+            and _previous_turn_count > 0
+        )
 
-        # Apply returning-user cold-start M
-        if user_memory.rapport_level != "new":
-            cold_m = self._session_memory.get_cold_start_m(self._current_user_id)
-            self.state_manager._state.current_m = cold_m
+        if _is_reconnect:
+            # Same user reconnecting — preserve behavioral state, just reset per-turn flags
+            await self.state_manager.reset_turn_flags()
             logger.info(
-                "Returning user '%s' (rapport=%s, name=%r) — cold start M=%.3f",
-                self._current_user_id, user_memory.rapport_level,
-                user_memory.user_name or "unknown", cold_m,
+                "Reconnection detected for user '%s' — preserving state "
+                "(current_m=%.3f, turn_count=%d)",
+                user_id, _previous_m, _previous_turn_count,
             )
+        else:
+            # New user or first session — full reset
+            await self.state_manager.reset()
+
+            # Apply returning-user cold-start M
+            if user_memory.rapport_level != "new":
+                cold_m = self._session_memory.get_cold_start_m(self._current_user_id)
+                self.state_manager._state.current_m = cold_m
+                logger.info(
+                    "Returning user '%s' (rapport=%s, name=%r) — cold start M=%.3f",
+                    self._current_user_id, user_memory.rapport_level,
+                    user_memory.user_name or "unknown", cold_m,
+                )
+
+        self._previous_session_user = user_id
 
         # Get session info (session_id, websocket_url, expires_at from StreamingSession)
         session_info = self._streaming_session.to_session_info()
+
+        # Start persona file watcher for hot-reload support
+        self._schedule_background_task(self._watch_persona_file())
 
         logger.info(
             f"Voice session started: session_id={self._streaming_session.session_id}, "
@@ -476,74 +630,142 @@ class WillowAgent:
         user_transcript = turn.user_input or ""
         agent_text = turn.agent_response or ""
 
+        # Q23/Q27: Interrupted turn — the turn was cut short by barge-in.
+        # Skip the behavioral pipeline to avoid inflating turn_count with
+        # a phantom turn from the aborted exchange.
+        if getattr(turn, 'was_interrupted', False):
+            logger.debug("Interrupted turn — skipping behavioral pipeline")
+            return
+
+        # FIX 6: Late agent transcription callback — gemini_live.py fires a
+        # supplementary TurnComplete(user_input="", agent_response=text) when
+        # output_transcription arrives after the main turn_complete event.
+        # Feeding Willow's own speech into handle_user_input() as user input
+        # (the "schizophrenia" bug) increments turn_count and can trigger T4.
+        # Update last_agent_response and return — pipeline already ran for this turn.
+        if not user_transcript and agent_text:
+            async with self.state_manager._lock:
+                self.state_manager._state.last_agent_response = agent_text
+            logger.debug("Late agent transcription received — updating last_agent_response only")
+            return
+
+        # Pipeline runs on every turn completion regardless of
+        # transcript availability. Transcripts used for tactic
+        # detection only — not for pipeline activation.
+        if not user_transcript:
+            user_transcript = "[audio turn]"
+
         # Send user transcript to frontend
-        if user_transcript.strip():
-            await self.send_client_command(
-                "turn_complete",
-                user_text=user_transcript,
-                text=agent_text,
-            )
+        await self.send_client_command(
+            "turn_complete",
+            user_text=user_transcript,
+            text=agent_text,
+        )
 
-            await self.handle_user_input(
-                user_input=user_transcript,
-                transcription_confidence=getattr(turn, 'confidence', 1.0),
-            )
+        result = await self.handle_user_input(
+            user_input=user_transcript,
+            transcription_confidence=getattr(turn, 'confidence', 1.0),
+            average_pitch=getattr(turn, 'average_pitch', 0.0),
+        )
 
-            # On the first user turn, passively listen for a name and persist it.
-            # Never forced — if the user didn't offer one, nothing is stored.
-            state_after = self.state_manager.get_snapshot()
-            if state_after.turn_count == 1:
-                from .core.session_memory import extract_user_context
-                captured_name, _ = extract_user_context(user_transcript)
-                if captured_name:
+        # Override last_agent_response with the real Gemini transcription.
+        # handle_user_input sets it to the synthetic _generate_response() output
+        # (a text-mode stub) — overwrite with actual audio transcript so that
+        # Tier 1 mirroring detection and subsequent turn analysis use real data.
+        if agent_text:
+            async with self.state_manager._lock:
+                self.state_manager._state.last_agent_response = agent_text
+
+        # On the first user turn, passively listen for a name and persist it.
+        # Never forced — if the user didn't offer one, nothing is stored.
+        state_after = self.state_manager.get_snapshot()
+        if state_after.turn_count == 1:
+            from .core.session_memory import extract_user_context
+            captured_name, _ = extract_user_context(user_transcript)
+            if captured_name:
+                safe_name = _sanitize_name(captured_name)
+                if safe_name is None:
+                    logger.warning("Rejected unsafe name: %s", captured_name[:30])
+                else:
                     _mem = self._session_memory.load(self._current_user_id)
                     if not _mem.user_name:
-                        _mem.user_name = captured_name
+                        _mem.user_name = safe_name
                         self._session_memory.save(_mem)
                         await self._streaming_session.inject_behavioral_context(
-                            f"The user's name is {captured_name}. "
+                            f"The user's name is {safe_name}. "
                             f"Use it naturally — once or twice this session, not every turn."
                         )
-                        logger.info("[CONTEXT] Captured user name on turn 1: %s", captured_name)
+                        logger.info("[CONTEXT] Captured user name on turn 1: %s", safe_name)
 
-            # Compute tone directive from updated behavioral state
-            state = self.state_manager.get_snapshot()
-            style = get_response_style(
-                current_m=state.current_m,
-                turn_id=state.turn_count,
-                user_input=user_transcript,
-            )
+        # Compute tone directive from updated behavioral state
+        state = self.state_manager.get_snapshot()
+        style = get_response_style(
+            current_m=state.current_m,
+            turn_id=state.turn_count,
+            user_input=user_transcript,
+        )
 
-            # Inject as conversation context — preserves voice parameters
-            zone = get_m_range(state.current_m)
+        # Fix 6: cancel filler before real response begins to prevent audio overlap
+        self._filler_player.cancel()
+
+        zone = get_m_range(state.current_m)
+        behavioral_note = self._last_behavioral_note
+        self._last_behavioral_note = None  # Consume — one-shot per turn
+        behavioral_trait = self._last_behavioral_trait
+        self._last_behavioral_trait = None  # Consume — one-shot per turn
+
+        # If Tier 4 fired, always inject the Sovereign Truth constraint.
+        directive = ""
+        if result.requires_tier4 and result.forced_prefix and result.response_directive:
             directive = (
-                f"{style.system_directive} "
+                f"{result.response_directive} "
+                f'Begin your next response exactly with: "{result.forced_prefix}"'
+            )
+            await self._streaming_session.inject_behavioral_context(directive)
+            logger.info("T4 INJECTION SENT: single")
+            self._last_injected_zone = zone  # Reset — T4 may shift behavioral state
+        elif zone != self._last_injected_zone:
+            # Zone changed — full directive + vocal delivery + opener.
+            directive = (
+                f"{style.system_directive}\n"
                 f'Begin your next response with: "{style.opener}"'
             )
-            # Append behavioral note from previous turn's tactic detection (Fix 1)
-            if self._last_behavioral_note:
-                directive += f' TACTIC DETECTED — suggested response tone: "{self._last_behavioral_note}"'
-                self._last_behavioral_note = None  # Consume — one-shot per turn
+            if behavioral_note:
+                directive += f'\nTACTIC: "{behavioral_note}"'
+            if behavioral_trait:
+                directive += f"\n{behavioral_trait}"
+            await self._streaming_session.inject_behavioral_context(directive)
+            self._last_injected_zone = zone
+            await self._streaming_session.switch_voice_for_zone(zone)
+        elif behavioral_note:
+            # Same zone, tactic fired — tactic + opener (~120 tokens cheaper than full directive).
+            opener_only = f'Begin your next response with: "{style.opener}"'
+            directive = f'TACTIC: "{behavioral_note}"'
+            if behavioral_trait:
+                directive += f" {behavioral_trait}"
+            directive += f"\n{opener_only}"
             await self._streaming_session.inject_behavioral_context(directive)
 
-            logger.info(
-                "[BEHAVIORAL] turn=%d current_m=%.3f zone=%s directive=%r",
-                state.turn_count,
-                state.current_m,
-                zone,
-                style.system_directive[:80],
-            )
+        logger.info(
+            "[BEHAVIORAL] turn=%d current_m=%.3f zone=%s directive=%r",
+            state.turn_count,
+            state.current_m,
+            zone,
+            directive[:80] if directive else "(no injection)",
+        )
+        if directive:
+            logger.info("DIRECTIVE SENT: '%s'", directive[:80])
 
-            # Push live state to dashboard over the same WebSocket (Gap 1)
-            # Dashboard handles {"type": "debug_state", "data": {...}} at line 923 of index.html
-            await self.send_client_command("debug_state", data=self.get_debug_state())
+        # Push live state to dashboard over the same WebSocket (Gap 1)
+        # Dashboard handles {"type": "debug_state", "data": {...}} at line 923 of index.html
+        await self.send_client_command("debug_state", data=self.get_debug_state())
 
-        elif agent_text.strip():
-            # Gemini responded without user transcript (e.g. greeting turn).
-            # Bug 2 fix: commit the turn so turn_count advances even when the
-            # ASR transcription layer returns empty text for this turn.
-            await self.send_client_command("turn_complete", text=agent_text)
-            await self.state_manager.update(m_modifier=0.0, is_sovereign_spike=False)
+        # Reopen mic gate for the next user turn.
+        # end_turn closes it (_mic_active=False); without this reset the gate
+        # stays closed after Gemini responds, preventing a second turn.
+        self._mic_active = True
+        self._mic_resume_frames = 0
+        logger.debug("[TURN] Mic gate reopened after Gemini turn_complete")
 
     async def _on_audio_chunk(self, chunk: AudioChunk) -> None:
         """
@@ -557,6 +779,11 @@ class WillowAgent:
             return
 
         self._interruption_handler.start_agent_speaking()
+
+        # Stop filler audio immediately if real response audio starts arriving
+        if self._filler_player.is_playing:
+            self._filler_player.cancel()
+            logger.debug("Canceled active filler audio because real response started")
 
         # Forward audio to browser if WebSocket is connected
         if self._client_websocket:
@@ -602,6 +829,30 @@ class WillowAgent:
         # Store reference for sending control commands back (T025, T028)
         self._client_websocket = websocket
         self._filler_player.set_websocket(websocket)
+        self._mic_active = True       # ensure gate is open at session start
+        self._mic_resume_frames = 0   # reset debounce counter
+
+        # Inject initial zone directive so Turn 1 already has style guidance.
+        # Without this, the first response runs on the base system prompt alone
+        # with no m-zone calibration (the directive is normally injected at the
+        # END of each turn, so Turn 1 would be unguided).
+        try:
+            _init_state = self.state_manager.get_snapshot()
+            _init_style = get_response_style(
+                current_m=_init_state.current_m,
+                turn_id=0,
+                user_input="",
+            )
+            _init_directive = (
+                f"{_init_style.system_directive} "
+                f'Begin your first response with: "{_init_style.opener}"'
+            )
+            await self._streaming_session.inject_behavioral_context(_init_directive)
+            self._last_injected_zone = get_m_range(_init_state.current_m)
+            logger.info("[CONTEXT] Initial zone directive injected for Turn 1")
+            logger.info("DIRECTIVE SENT: '%s'", _init_directive[:80])
+        except Exception as e:
+            logger.warning("[CONTEXT] Initial directive injection failed: %s", e)
 
         try:
             while True:
@@ -609,7 +860,8 @@ class WillowAgent:
                 message = await self._receive_message(websocket)
 
                 if message is None:
-                    break  # Connection closed
+                    logger.info("WebSocket disconnected cleanly for session %s", session_id)
+                    break  # Connection closed — exit loop, run finally cleanup
 
                 if isinstance(message, str):
                     # Text frame = JSON control message (T028 preflight)
@@ -620,7 +872,7 @@ class WillowAgent:
                 audio_data: bytes = message
 
                 if len(audio_data) == 0:
-                    continue  # Timeout, no data
+                    continue  # Timeout, no data — keep connection alive
 
                 # VAD coordination (002-gemini-audio-opt):
                 # The client-side noise gate (AudioWorklet) operates BEFORE audio bytes
@@ -635,19 +887,44 @@ class WillowAgent:
 
                 if user_speaking and self._interruption_handler.is_agent_speaking:
                     # Interruption detected - signal to streaming session
+                    # Q17: Cancel filler audio immediately on barge-in.
+                    # The interrupt() callback also cancels, but this is
+                    # a defensive guard in case the callback errors.
+                    self._filler_player.cancel()
                     await self._streaming_session.interrupt()
                     self._interruption_handler.stop_agent_speaking()
                     self._interruption_handler.prepare_for_new_input()
                     continue
 
-                # Forward to Gemini Live
-                await self._streaming_session.stream(audio_data)
+                # Re-enable mic gate when confirmed speech is detected after end_turn.
+                # Require consecutive speaking frames to avoid re-opening on ambient noise.
+                if not self._mic_active:
+                    if user_speaking:
+                        self._mic_resume_frames = getattr(self, '_mic_resume_frames', 0) + 1
+                        if self._mic_resume_frames >= 3:
+                            self._mic_active = True
+                            self._mic_resume_frames = 0
+                            logger.info("[TURN] Confirmed speech after end_turn — mic gate reopened")
+                    else:
+                        self._mic_resume_frames = 0
+                    continue  # Don't forward while gate is closed
+
+                # Forward to Gemini Live — absorb transient send errors to keep
+                # the frontend WebSocket alive across brief Gemini reconnects.
+                try:
+                    await self._streaming_session.stream(audio_data)
+                except Exception as e:
+                    logger.warning(
+                        "[STREAM] Transient stream error (session %s): %s — continuing",
+                        session_id, e,
+                    )
 
         except asyncio.CancelledError:
-            logger.info(f"Voice stream cancelled for session {session_id}")
+            logger.info("Voice stream cancelled for session %s", session_id)
         except Exception as e:
-            logger.error(f"Voice stream error for session {session_id}: {e}")
-            raise
+            # Log but do NOT re-raise — re-raising would skip the memory-save
+            # in finally and give the frontend an unclean disconnect.
+            logger.error("Voice stream error for session %s: %s", session_id, e)
         finally:
             # Save session memory before cleanup
             try:
@@ -671,6 +948,16 @@ class WillowAgent:
             except Exception as e:
                 logger.error("Failed to save session memory: %s", e)
 
+            # Notify the frontend that the session ended so the UI can show a
+            # disconnect state instead of freezing. Only send if WS is still open.
+            try:
+                await self.send_client_command("session_ended", reason="session_closed")
+            except Exception:
+                pass  # WebSocket may already be closed — expected on client-side close
+
+            # Do NOT call ws.close() here — the frontend initiated the disconnect,
+            # so the WebSocket is already closed on their end. Calling close() again
+            # causes "send after close" errors (Q19/Q30).
             self._client_websocket = None
             self._filler_player.set_websocket(None)
             if self._streaming_session and self._streaming_session.is_connected:
@@ -692,7 +979,10 @@ class WillowAgent:
             if hasattr(websocket, 'receive'):
                 # FastAPI WebSocket
                 msg = await asyncio.wait_for(websocket.receive(), timeout=0.1)
-                if msg.get("type") == "websocket.disconnect":
+                msg_type = msg.get("type", "")
+                if msg_type == "websocket.disconnect":
+                    return None
+                if msg_type == "websocket.close":
                     return None
                 if "bytes" in msg and msg["bytes"]:
                     return msg["bytes"]
@@ -705,8 +995,17 @@ class WillowAgent:
                 return data
         except asyncio.TimeoutError:
             return b""
-        except Exception:
-            return None
+        except asyncio.CancelledError:
+            raise  # Propagate cancellation — don't swallow it
+        except Exception as e:
+            # Only treat as disconnect if it's a known connection-closed error.
+            # Unknown errors are logged and treated as timeout (keep loop alive).
+            err_str = str(e).lower()
+            if any(k in err_str for k in ("disconnect", "closed", "close", "reset", "eof")):
+                logger.info("WebSocket connection closed: %s", e)
+                return None
+            logger.warning("WebSocket receive error (non-fatal): %s", e)
+            return b""
 
     async def _handle_client_message(self, raw: str) -> None:
         """
@@ -740,7 +1039,40 @@ class WillowAgent:
                 logger.debug("[PITCH] User vocal pitch: %d Hz", hz)
 
         elif msg_type == "end_turn":
-            logger.debug("[TURN] Client-side silence detected end_turn")
+            # Mic was turned off — close the gate and signal Gemini that the
+            # user finished speaking. With manual VAD (auto_vad=False), this
+            # sends ActivityEnd which tells Gemini to generate a response.
+            self._mic_active = False
+            self._mic_resume_frames = 0
+            logger.info("[TURN] end_turn received — mic gate closed, sending ActivityEnd")
+            if self._streaming_session and self._streaming_session.is_connected:
+                try:
+                    await self._streaming_session.end_turn()
+                except Exception as e:
+                    logger.warning("[TURN] end_turn signal failed: %s", e)
+
+        elif msg_type == "vision_frame":
+            # Rate limit: drop frame if there is already a vision queue or send running
+            if getattr(self, "_vision_in_flight", False):
+                return
+                
+            self._vision_in_flight = True
+            try:
+                source = msg.get("source", "unknown")
+                timestamp = msg.get("timestamp", 0)
+                b64_data = msg.get("data", "")
+                
+                logger.debug("Received vision frame: source=%s timestamp=%s", source, timestamp)
+                
+                if self._streaming_session and self._streaming_session.is_connected:
+                    await self._streaming_session.send(
+                        input={
+                            "mime_type": "image/jpeg",
+                            "data": b64_data
+                        }
+                    )
+            finally:
+                self._vision_in_flight = False
 
         else:
             logger.debug("Unknown client message type: %s", msg_type)
@@ -779,6 +1111,7 @@ class WillowAgent:
         self,
         user_input: str,
         transcription_confidence: float = 1.0,
+        average_pitch: float = 0.0,
     ) -> TurnResult:
         """
         Main processing pipeline for user input.
@@ -802,11 +1135,25 @@ class WillowAgent:
         )
         self._current_turn_latencies = {}
 
+        # Gemini Live context window age warning — session context accumulates
+        # natively on the API side and cannot be trimmed. Warn at 90+ minutes.
+        if self._session_start_dt is not None:
+            _session_age_min = (datetime.now() - self._session_start_dt).total_seconds() / 60
+            if _session_age_min >= 90:
+                logger.warning(
+                    "Gemini Live session age %.1f min — context window near limit; "
+                    "recommend starting a new session to prevent degradation.",
+                    _session_age_min,
+                )
+                await self.send_client_command(
+                    "session_age_warning", age_minutes=round(_session_age_min)
+                )
+
         # Get current state snapshot (lock-free read)
         current_state = self.state_manager.get_snapshot()
 
         # Process through tier coordination
-        result = await self.process_turn(user_input, current_state)
+        result = await self.process_turn(user_input, current_state, average_pitch=average_pitch)
 
         # Create conversational turn record
         turn = self._create_turn_record(
@@ -818,6 +1165,9 @@ class WillowAgent:
         )
 
         self._turn_history.append(turn)
+        # Cap turn history to prevent unbounded memory growth
+        if len(self._turn_history) > 50:
+            self._turn_history = self._turn_history[-50:]
 
         # Store last agent response for mirroring detection in subsequent turns
         async with self.state_manager._lock:
@@ -828,7 +1178,8 @@ class WillowAgent:
     async def process_turn(
         self,
         user_input: str,
-        current_state: SessionState
+        current_state: SessionState,
+        average_pitch: float = 0.0,
     ) -> TurnResult:
         """
         Coordinate tier execution for a single turn.
@@ -845,9 +1196,16 @@ class WillowAgent:
         Returns:
             TurnResult with processed response
         """
+        logger.info(f"PROCESS TURN FIRED: turn={current_state.turn_count}, transcript='{user_input[:50]}'")
+
         requires_tier3 = False
         requires_tier4 = False
         thought_signature = None
+
+        # Reset per-turn flags at the START of each turn so stale audio_started
+        # from a previous Tier 4 fire doesn't block the current turn (FR-022).
+        await self.state_manager.reset_turn_flags()
+        self._tier4_fired_this_turn = False
 
         # ====================================================================
         # T046 / US4: Troll Defense — 3 consecutive Sovereign Spikes detected.
@@ -862,7 +1220,7 @@ class WillowAgent:
             # If the user's tone has genuinely changed, allow recovery (T041/US4).
             from .signatures.tactic_detector import TacticDetector
             _detector = TacticDetector()
-            _tactic_result = _detector.detect(user_input)
+            _tactic_result = await _detector.detect(user_input)
             if (
                 _tactic_result.tactic == "sincere_pivot"
                 and _tactic_result.confidence >= TacticDetector.DETECTION_THRESHOLD
@@ -913,6 +1271,7 @@ class WillowAgent:
         # Determine m_modifier from heuristics (Tier 3 will refine this)
         m_modifier, is_sovereign_spike = self._calculate_m_modifier(user_input)
         self._last_tier2_modifier = m_modifier  # stored for Tier 3 retroactive correction
+        self._last_tier2_turn_count = current_state.turn_count + 1  # Q10/Q21: will be this after update()
 
         # Use Tier2Metabolism for pure calculation (latency verification)
         metabolism_result = self.tier2_metabolism.calculate_state_update(
@@ -936,14 +1295,25 @@ class WillowAgent:
         )
 
         # T076 / FR-021: At the turn where Cold Start ends (turn 4), evaluate
-        # any deferred contradictions queued during turns 1-3. This runs as a
-        # background task — if a deferred contradiction is relevant to the
-        # current input, it fires Tier 4. Note: this is a factual correction
+        # any deferred contradictions queued during turns 1-3. Runs inline
+        # (not background) so forced_prefix can be injected into the TurnResult
+        # if the deferred contradiction fires. This is a factual correction
         # path, completely separate from sincere_pivot / grace_boost.
         if current_state.cold_start_active and not new_state.cold_start_active:
-            self._schedule_background_task(
-                self._evaluate_deferred_contradictions(user_input, new_state)
-            )
+            deferred_result = await self._evaluate_deferred_contradictions(user_input, new_state)
+            if deferred_result and deferred_result.fired:
+                await self.state_manager.set_audio_started()
+                return TurnResult(
+                    response_text="",  # LLM will generate the response now
+                    thought_signature=None,
+                    m_modifier=m_modifier,
+                    tier_latencies=self._current_turn_latencies.copy(),
+                    requires_tier3=False,
+                    requires_tier4=True,
+                    filler_audio_path=None,
+                    forced_prefix=deferred_result.forced_prefix,
+                    response_directive=deferred_result.response_directive,
+                )
 
         # Determine if higher tiers are needed
         if self._should_trigger_tier3(user_input, new_state):
@@ -963,6 +1333,7 @@ class WillowAgent:
             filler_audio_path = self._select_filler_audio(requires_tier3, requires_tier4)
             if filler_audio_path:
                 clip_name = filler_audio_path.split("/")[-1].replace(".wav", "")
+                self._interruption_handler.start_agent_speaking()
                 await self._filler_player.play(clip_name)
                 logger.debug(
                     "Filler triggered: clip=%s tier3=%s tier4=%s threshold=%.0fms",
@@ -973,7 +1344,7 @@ class WillowAgent:
         # Now schedule background tier tasks
         if requires_tier3:
             self._schedule_background_task(
-                self._process_tier3(user_input, new_state)
+                self._process_tier3(user_input, new_state, average_pitch=average_pitch)
             )
 
         # Bug 1 fix: Run Tier 4 inline — not as a background task — so it
@@ -984,21 +1355,23 @@ class WillowAgent:
         if requires_tier4:
             tier4_result = await self._process_tier4(user_input, new_state)
             if tier4_result and tier4_result.fired:
-                # Tier 4 handled it — serve the response_template directly,
-                # bypass the Gemini generation path entirely.
+                # Q20: Cancel filler immediately — Tier 4 is about to deliver
+                # its own response and filler audio must not overlap.
+                self._filler_player.cancel()
+                self._tier4_fired_this_turn = True
+                # Tier 4 handled it — we will inject the constraint into Gemini.
                 await self.state_manager.set_audio_started()
                 return TurnResult(
-                    response_text=tier4_result.response_text,
+                    response_text="",  # LLM will generate the response now
                     thought_signature=None,
                     m_modifier=m_modifier,
                     tier_latencies=self._current_turn_latencies.copy(),
                     requires_tier3=requires_tier3,
                     requires_tier4=True,
                     filler_audio_path=filler_audio_path,
+                    forced_prefix=tier4_result.forced_prefix,
+                    response_directive=tier4_result.response_directive,
                 )
-
-        # Reset per-turn flags for the next turn (FR-022, T074)
-        await self.state_manager.reset_turn_flags()
 
         # Generate response based on current state and Tier 1 tone analysis.
         # In the live pipeline, _generate_response would return the raw LLM
@@ -1060,13 +1433,15 @@ class WillowAgent:
 
         # Collaborative signals
         if any(w in input_lower for w in intents.get("collaborative", [])):
-            return (1.5, False)
-
+            m_modifier = 1.5
         # Hostile signals
-        if any(w in input_lower for w in intents.get("hostile", [])):
-            return (-0.5, False)
+        elif any(w in input_lower for w in intents.get("hostile", [])):
+            m_modifier = -0.5
+        else:
+            m_modifier = 0.0
 
-        return (0.0, False)
+        m_modifier = max(-1.0, min(1.0, m_modifier))
+        return (m_modifier, False)
 
     def _should_trigger_tier3(
         self,
@@ -1087,6 +1462,7 @@ class WillowAgent:
         user_input: str,
         state: SessionState,
         thought_tag_data: Optional[dict[str, Any]] = None,
+        average_pitch: float = 0.0,
     ) -> Tier3Result:
         """
         Tier 3: Conscious — Thought Signature analysis (T034, T039, T040).
@@ -1107,55 +1483,93 @@ class WillowAgent:
                 if t.agent_response
             ]
 
-        result = await self.tier3_conscious.process(
-            user_input=user_input,
-            current_m=state.current_m,
-            weighted_average_m=state.residual_plot.weighted_average_m,
-            recent_agent_responses=recent_agent_responses,
-            thought_tag_data=thought_tag_data,
-        )
-
-        self._current_turn_latencies["tier3"] = result.latency_ms
-
-        # Store behavioral note for next turn's directive injection (Fix 1)
-        if result.behavioral_note:
-            self._last_behavioral_note = result.behavioral_note
-            logger.debug("[RULES] Behavioral note stored for next directive: %r", result.behavioral_note)
-
-        # Write debug state for live overlay
-        state_snapshot = self.state_manager.get_snapshot()
-        state_snapshot.last_thought_signature = result.thought_signature
-        state_snapshot.last_response_source = "gemini"
-
-        # T052 / US5: Log TierTrigger when filler threshold exceeded
-        if result.tier_trigger is not None:
-            from datetime import datetime
-            filler_clip = self._filler_player.clip_for_trigger(result.tier_trigger.trigger_type)
-            trigger_with_filler = TierTrigger(
-                trigger_type=result.tier_trigger.trigger_type,
-                tier_fired=result.tier_trigger.tier_fired,
-                filler_audio_played=filler_clip,
-                processing_duration_ms=result.tier_trigger.processing_duration_ms,
-                triggered_at=result.tier_trigger.triggered_at,
+        try:
+            result = await self.tier3_conscious.process(
+                user_input=user_input,
+                current_m=state.current_m,
+                weighted_average_m=state.residual_plot.weighted_average_m,
+                recent_agent_responses=recent_agent_responses,
+                thought_tag_data=thought_tag_data,
+                average_pitch=average_pitch,
             )
-            log_tier_trigger(trigger_with_filler)
 
-        # Retroactive correction: compare Tier 3's intent-derived modifier
-        # against Tier 2's fast heuristic. If they diverge significantly,
-        # apply a correction to undo Tier 2's error.
-        if result.thought_signature and hasattr(self, '_last_tier2_modifier'):
-            tier3_modifier = result.thought_signature.m_modifier
-            tier3_is_spike = (result.thought_signature.intent == "devaluing")
-            correction = await self.state_manager.retroactive_correct(
-                tier2_modifier=self._last_tier2_modifier,
-                tier3_modifier=tier3_modifier,
-                tier3_is_spike=tier3_is_spike,
-            )
-            if correction is not None:
-                logger.info(
-                    "[CORRECTION] Tier 3 overrode Tier 2: tier2=%.2f tier3=%.2f delta=%.2f",
-                    self._last_tier2_modifier, tier3_modifier, correction,
+            self._current_turn_latencies["tier3"] = result.latency_ms
+
+            # Store behavioral note for next turn's directive injection (Fix 1)
+            if result.behavioral_note:
+                self._last_behavioral_note = result.behavioral_note
+                logger.debug("[RULES] Behavioral note stored for next directive: %r", result.behavioral_note)
+                # Layer 3: also store the single relevant trait for this tactic
+                if result.detected_tactic_key:
+                    self._last_behavioral_trait = _get_tactic_trait_injection(result.detected_tactic_key)
+                    if self._last_behavioral_trait:
+                        logger.debug(
+                            "[LAYER3] Trait injection queued for tactic=%s: %s",
+                            result.detected_tactic_key, self._last_behavioral_trait,
+                        )
+
+            # Write debug state for live overlay
+            state_snapshot = self.state_manager.get_snapshot()
+            state_snapshot.last_thought_signature = result.thought_signature
+            state_snapshot.last_response_source = "gemini"
+
+            # T052 / US5: Log TierTrigger when filler threshold exceeded.
+            # Q20: Skip if Tier 4 already fired this turn — prevents the
+            # delayed Tier 3 background task from playing filler over Tier 4's TTS.
+            if result.tier_trigger is not None and not self._tier4_fired_this_turn:
+                from datetime import datetime
+                filler_clip = self._filler_player.clip_for_trigger(result.tier_trigger.trigger_type)
+                trigger_with_filler = TierTrigger(
+                    trigger_type=result.tier_trigger.trigger_type,
+                    tier_fired=result.tier_trigger.tier_fired,
+                    filler_audio_played=filler_clip,
+                    processing_duration_ms=result.tier_trigger.processing_duration_ms,
+                    triggered_at=result.tier_trigger.triggered_at,
                 )
+                log_tier_trigger(trigger_with_filler)
+
+            # Retroactive correction: compare Tier 3's intent-derived modifier
+            # against Tier 2's fast heuristic. If they diverge significantly,
+            # apply a correction to undo Tier 2's error.
+            if result.thought_signature and hasattr(self, '_last_tier2_modifier'):
+                tier3_modifier = result.thought_signature.m_modifier
+                tier3_is_spike = (result.thought_signature.intent == "devaluing")
+                correction = await self.state_manager.retroactive_correct(
+                    tier2_modifier=self._last_tier2_modifier,
+                    tier3_modifier=tier3_modifier,
+                    tier3_is_spike=tier3_is_spike,
+                    correction_turn_count=self._last_tier2_turn_count,
+                )
+                if correction is not None:
+                    logger.info(
+                        "[CORRECTION] Tier 3 overrode Tier 2: tier2=%.2f tier3=%.2f delta=%.2f",
+                        self._last_tier2_modifier, tier3_modifier, correction,
+                    )
+
+            # FIX 5: Grace boost on sincere_pivot outside troll_defense.
+            # troll_defense path (process_turn) handles this when troll_defense_active=True;
+            # this covers the normal path where sincere_pivot fires without active troll defense.
+            from .signatures.tactic_detector import TacticDetector
+            if (
+                result.tactic_result.tactic == "sincere_pivot"
+                and result.tactic_result.confidence >= TacticDetector.DETECTION_THRESHOLD
+                and not state.troll_defense_active
+            ):
+                await self.state_manager.apply_grace_boost()
+                logger.info(
+                    "Grace boost applied via sincere_pivot (normal path, session=%s turn=%d)",
+                    self.session_id,
+                    state.turn_count + 1,
+                )
+
+        except Exception as _e:
+            # Fix 1: log here AND re-raise so done_callback also captures it.
+            # Prevents the background task from dying silently without a trace.
+            logger.error(
+                "Tier 3 processing failed — behavioral state unchanged: %s",
+                _e, exc_info=True,
+            )
+            raise
 
         return result
 
@@ -1173,6 +1587,17 @@ class WillowAgent:
 
         Latency budget: <2 000ms. Runs as background asyncio.Task (T038).
         """
+        # Fix 3: debounce rapid Tier 4 fires. If T4 fired within the last 500ms,
+        # skip — prevents cancel/restart audio stutter on rapid speech bursts.
+        _T4_DEBOUNCE_MS = 500.0
+        _now_ms = time.perf_counter() * 1000
+        if _now_ms - self._last_t4_fire_time < _T4_DEBOUNCE_MS:
+            logger.debug(
+                "Tier 4 debounced — %.0fms since last fire (threshold %.0fms)",
+                _now_ms - self._last_t4_fire_time, _T4_DEBOUNCE_MS,
+            )
+            return None
+
         weighted_avg = state.residual_plot.weighted_average_m
 
         async def _real_tier3_intent():
@@ -1195,11 +1620,15 @@ class WillowAgent:
             transcription_confidence=transcription_confidence,
             weighted_average_m=weighted_avg,
             tier3_intent_factory=_real_tier3_intent,
-            active_task=self._active_gemini_task,
+            streaming_session=self._streaming_session,
         )
 
         if result:
             self._current_turn_latencies["tier4"] = result.latency_ms
+
+            # Fix 3: record fire time for debounce on next rapid-fire attempt
+            if result.fired:
+                self._last_t4_fire_time = time.perf_counter() * 1000
 
             # Write debug state for live overlay
             state_snapshot = self.state_manager.get_snapshot()
@@ -1212,6 +1641,8 @@ class WillowAgent:
 
             if result.fired and not result.vacuum_mode and result.synthetic_turn:
                 self._conversation_messages.append(result.synthetic_turn)
+                if len(self._conversation_messages) > 20:
+                    self._conversation_messages = self._conversation_messages[-20:]
 
             # T025: Send flush command to browser AudioWorklet when Tier 4 fires.
             # The flush triggers a 5-10ms linear fade-out on in-flight audio,
@@ -1252,13 +1683,15 @@ class WillowAgent:
         """
         result = await self._tier4_sovereign.evaluate_deferred_contradictions(
             current_user_input=user_input,
-            active_task=self._active_gemini_task,
+            streaming_session=self._streaming_session,
         )
 
         if result:
             self._current_turn_latencies["tier4_deferred"] = result.latency_ms
             if result.fired and not result.vacuum_mode and result.synthetic_turn:
                 self._conversation_messages.append(result.synthetic_turn)
+                if len(self._conversation_messages) > 20:
+                    self._conversation_messages = self._conversation_messages[-20:]
             if result.flush_audio_buffer:
                 await self.send_client_command(
                     "flush_audio_buffer", fade_duration_ms=7
@@ -1289,6 +1722,18 @@ class WillowAgent:
         task = asyncio.create_task(coro)
         self._background_tasks.add(task)
         task.add_done_callback(self._background_tasks.discard)
+        task.add_done_callback(self._log_background_task_error)
+
+    def _log_background_task_error(self, task: asyncio.Task) -> None:
+        """Log unhandled exceptions from background tasks (Fix 1 — prevents silent death)."""
+        if task.cancelled():
+            return
+        exc = task.exception()
+        if exc is not None:
+            logger.error(
+                "Background task '%s' failed with unhandled exception: %s",
+                task.get_name(), exc, exc_info=exc,
+            )
 
     def _generate_response(
         self,
@@ -1449,6 +1894,92 @@ class WillowAgent:
     def get_turn_history(self) -> list[ConversationalTurn]:
         """Get conversation history."""
         return self._turn_history.copy()
+
+    async def _build_reconnect_context(self) -> str | None:
+        """Build compact reconnect context: last 3 turns + behavioral state.
+
+        Called by StreamingSession after a successful reconnect to inject
+        minimal conversational memory instead of leaving Gemini cold.
+        Never exceeds ~500 tokens.
+
+        Returns:
+            Compact context string, or None if no history exists.
+        """
+        if not self._turn_history:
+            return None
+
+        state = self.state_manager.get_snapshot()
+        zone = get_m_range(state.current_m)
+
+        # User name from session memory (if captured)
+        user_name = "unknown"
+        try:
+            mem = self._session_memory.load(self._current_user_id)
+            if mem.user_name:
+                user_name = mem.user_name
+        except Exception:
+            pass
+
+        # State summary line
+        summary = (
+            f"Session resumed. Behavioral state: current_m={state.current_m:.2f}, "
+            f"zone={zone}, turn={state.turn_count}, user={user_name}. "
+            f"Last exchange context attached."
+        )
+
+        # Last 3 turns — truncated to keep total under 500 tokens
+        recent = self._turn_history[-3:]
+        turn_lines = []
+        for t in recent:
+            user_text = (t.user_input or "")[:120]
+            agent_text = (t.agent_response or "")[:120]
+            turn_lines.append(f"User: {user_text}")
+            turn_lines.append(f"Willow: {agent_text}")
+
+        context = summary + "\n" + "\n".join(turn_lines)
+
+        # Hard cap at ~2000 chars (~500 tokens)
+        if len(context) > 2000:
+            context = context[:2000]
+
+        # Log savings estimate
+        full_history_chars = sum(
+            len(t.user_input or "") + len(t.agent_response or "")
+            for t in self._turn_history
+        )
+        full_tokens = full_history_chars // 4
+        reconnect_tokens = len(context) // 4
+        logger.debug(
+            "Reconnect context: ~%d tokens (vs ~%d full history)",
+            reconnect_tokens, full_tokens,
+        )
+
+        return context
+
+    async def _watch_persona_file(self) -> None:
+        """Watch data/willow_persona.json for changes and hot-reload."""
+        import os
+        from .persona.warm_sharp import _load_persona
+        from .tiers.tier3_conscious import _load_tone_signals
+
+        persona_path = Path(__file__).parent.parent / "data" / "willow_persona.json"
+        last_mtime = 0.0
+
+        if persona_path.exists():
+            last_mtime = os.stat(persona_path).st_mtime
+
+        while True:
+            await asyncio.sleep(2)
+            try:
+                if persona_path.exists():
+                    current_mtime = os.stat(persona_path).st_mtime
+                    if current_mtime > last_mtime:
+                        last_mtime = current_mtime
+                        _load_persona.cache_clear()
+                        _load_tone_signals.cache_clear()
+                        logger.info("Persona file hot-reloaded: caches cleared for willow_persona.json")
+            except Exception as e:
+                logger.error(f"Error watching persona file: {e}")
 
     async def shutdown(self) -> None:
         """

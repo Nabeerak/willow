@@ -42,7 +42,8 @@ def make_truth(
         key=key,
         assertion=assertion,
         contradiction_keywords=keywords,
-        response_template=template,
+        forced_prefix=template,
+        response_directive="[test directive]",
         priority=priority,
         vacuum_mode=vacuum_mode,
         response_on_return=response_on_return,
@@ -249,35 +250,6 @@ class TestGateThree:
 
 
 # ---------------------------------------------------------------------------
-# T071: Hard exit
-# ---------------------------------------------------------------------------
-
-class TestHardExit:
-    @pytest.mark.asyncio
-    async def test_cancels_active_task(self):
-        async def long_running():
-            await asyncio.sleep(10)
-
-        task = asyncio.create_task(long_running())
-        await SovereignTruthCache.hard_exit(task)
-        assert task.cancelled()
-
-    @pytest.mark.asyncio
-    async def test_none_task_no_error(self):
-        # Must not raise when no active task
-        await SovereignTruthCache.hard_exit(None)
-
-    @pytest.mark.asyncio
-    async def test_done_task_no_error(self):
-        async def instant():
-            return 42
-
-        task = asyncio.create_task(instant())
-        await task  # Let it complete
-        await SovereignTruthCache.hard_exit(task)  # Must not raise
-
-
-# ---------------------------------------------------------------------------
 # T072: Response construction (FR-008h)
 # ---------------------------------------------------------------------------
 
@@ -286,14 +258,6 @@ class TestBuildResponse:
         truth = make_truth(template="I am not a chatbot. Different category.")
         result = SovereignTruthCache.build_response(truth)
         assert result == "I am not a chatbot. Different category."
-
-    def test_assertion_interpolated_into_template(self):
-        truth = make_truth(
-            assertion="Willow is a behavioral voice agent.",
-            template="Let me be clear: {assertion}",
-        )
-        result = SovereignTruthCache.build_response(truth)
-        assert "Willow is a behavioral voice agent." in result
 
     def test_no_llm_involvement(self):
         # Response must be deterministic — same input, same output, always
@@ -312,18 +276,10 @@ class TestBuildSyntheticTurn:
         turn = SovereignTruthCache.build_synthetic_turn(make_truth())
         assert turn["role"] == "assistant"
 
-    def test_content_is_verbatim_assertion(self):
-        truth = make_truth(assertion="Willow is not a chatbot.")
+    def test_content_is_forced_prefix(self):
+        truth = make_truth(template="Willow is not a chatbot.")
         turn = SovereignTruthCache.build_synthetic_turn(truth)
         assert turn["content"] == "Willow is not a chatbot."
-
-    def test_content_is_not_response_template(self):
-        truth = make_truth(
-            assertion="Willow is not a chatbot.",
-            template="Different category entirely.",
-        )
-        turn = SovereignTruthCache.build_synthetic_turn(truth)
-        assert turn["content"] != "Different category entirely."
 
 
 # ---------------------------------------------------------------------------
@@ -377,7 +333,7 @@ class TestVacuumModeFields:
         truth = vacuum_cache.get("vacuum_troll")
         assert truth.vacuum_mode is True
         assert truth.response_on_return == "Glad we're back to it."
-        assert truth.response_template == "[VACUUM_MODE]"
+        assert truth.forced_prefix == "[VACUUM_MODE]"
 
     def test_normal_truth_vacuum_false(self):
         truth = make_truth()

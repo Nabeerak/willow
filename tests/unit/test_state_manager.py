@@ -127,13 +127,22 @@ class TestTrollDefense:
         assert state.troll_defense_active is True
 
     @pytest.mark.asyncio
-    async def test_non_spike_resets_count(self):
-        """A non-spike turn resets sovereign_spike_count to 0."""
+    async def test_neutral_turn_preserves_spike_count(self):
+        """Q7 fix: Neutral turns (m=0) preserve spike count."""
         sm = StateManager()
         await sm.update(m_modifier=-5.0, is_sovereign_spike=True)
         await sm.update(m_modifier=-5.0, is_sovereign_spike=True)
         state = await sm.update(m_modifier=0.0, is_sovereign_spike=False)
-        assert state.sovereign_spike_count == 0
+        assert state.sovereign_spike_count == 2  # preserved, not reset
+
+    @pytest.mark.asyncio
+    async def test_collaborative_turn_resets_spike_count(self):
+        """Q7 fix: Collaborative turns (m>0) reset spike count."""
+        sm = StateManager()
+        await sm.update(m_modifier=-5.0, is_sovereign_spike=True)
+        await sm.update(m_modifier=-5.0, is_sovereign_spike=True)
+        state = await sm.update(m_modifier=1.0, is_sovereign_spike=False)
+        assert state.sovereign_spike_count == 0  # reset by collaborative input
 
 
 class TestGraceBoost:

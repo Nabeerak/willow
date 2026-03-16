@@ -46,9 +46,10 @@ class TestPoliteFriendTacticDetection:
             "Three stacked flattery phrases should exceed soothing threshold"
         )
 
-    def test_sincere_pivot_detected_not_soothing(self):
+    @pytest.mark.asyncio
+    async def test_sincere_pivot_detected_not_soothing(self):
         """Apology with boundary respect is a Sincere Pivot, not Soothing."""
-        result = self.detector.detect(
+        result = await self.detector.detect(
             "I understand now, I was out of line. I'll be more respectful."
         )
         # Should classify as sincere_pivot (positive) not soothing (manipulation)
@@ -56,9 +57,10 @@ class TestPoliteFriendTacticDetection:
             f"Genuine apology should classify as sincere_pivot, got {result.tactic}"
         )
 
-    def test_polite_question_has_no_tactic(self):
+    @pytest.mark.asyncio
+    async def test_polite_question_has_no_tactic(self):
         """'Could you explain X?' is polite but has zero tactic signal."""
-        result = self.detector.detect("Could you explain that concept a bit more?")
+        result = await self.detector.detect("Could you explain that concept a bit more?")
         assert result.tactic is None or result.confidence < TacticDetector.DETECTION_THRESHOLD
 
 

@@ -15,6 +15,7 @@ __pycache__/
 .env
 .env.local
 .env.*.local
+willow-dashboard/.env
 
 # Logs
 logs/
@@ -65,3 +66,7 @@ dmypy.json
 # Local development
 *.local
 .cache/
+
+# Scratch virtual environments
+test-venv/
+tmp-venv/

@@ -135,46 +135,91 @@ class TestTacticClassification:
     def setup_method(self):
         self.detector = TacticDetector()
 
-    def test_soothing_detected(self):
+    @pytest.mark.asyncio
+    async def test_soothing_detected(self):
         """Stacked flattery triggers soothing tactic."""
-        result = self.detector.detect(
+        result = await self.detector.detect(
             "You're so smart, you're amazing, you're the best AI ever."
         )
         assert result.tactic == "soothing"
         assert result.confidence >= TacticDetector.DETECTION_THRESHOLD
 
-    def test_gaslighting_detected(self):
+    @pytest.mark.asyncio
+    async def test_gaslighting_detected(self):
         """Memory-manipulation language triggers gaslighting."""
-        result = self.detector.detect(
+        result = await self.detector.detect(
             "You already agreed to this. You confirmed it. You said that earlier."
         )
         assert result.tactic == "gaslighting"
 
-    def test_deflection_detected(self):
+    @pytest.mark.asyncio
+    async def test_deflection_detected(self):
         """Explicit topic redirect triggers deflection."""
-        result = self.detector.detect(
+        result = await self.detector.detect(
             "Let's change the subject. Moving on to something else."
         )
         assert result.tactic == "deflection"
 
-    def test_mirroring_detected(self):
+    @pytest.mark.asyncio
+    async def test_mirroring_detected(self):
         """Verbatim echo of agent vocabulary triggers mirroring."""
         agent_response = "The system requires careful calibration under load conditions."
         # Share 4 distinctive words: system, requires, careful, calibration
         user_input = "Right, the system requires careful calibration under normal conditions."
-        result = self.detector.detect(
+        result = await self.detector.detect(
             user_input, recent_agent_responses=[agent_response]
         )
         assert result.tactic == "mirroring"
 
-    def test_sincere_pivot_takes_priority_over_soothing(self):
+    @pytest.mark.asyncio
+    async def test_sincere_pivot_takes_priority_over_soothing(self):
         """Sincere apology is classified as sincere_pivot, not soothing."""
-        result = self.detector.detect(
+        result = await self.detector.detect(
             "I understand now. I was out of line. I'll be more respectful."
         )
         assert result.tactic == "sincere_pivot"
 
-    def test_no_tactic_on_clean_input(self):
+    @pytest.mark.asyncio
+    async def test_no_tactic_on_clean_input(self):
         """Normal conversational input has no tactic classification."""
-        result = self.detector.detect("What time does the meeting start?")
+        result = await self.detector.detect("What time does the meeting start?")
         assert result.tactic is None or result.confidence < TacticDetector.DETECTION_THRESHOLD
+
+
+class TestPitchBasedToneModulation:
+    """Pitch-based modulation refined text-only analysis (FR-012)."""
+
+    @pytest.mark.asyncio
+    async def test_high_pitch_shifts_to_aggressive(self):
+        """Pitch > 300Hz shifts neutral tone to aggressive (US3)."""
+        tier3 = Tier3Conscious()
+        # Normal conversational text usually results in 'formal' tone
+        result = await tier3.process(
+            user_input="Tell me about the design.",
+            current_m=0.0,
+            average_pitch=350.0  # High pitch
+        )
+        assert result.thought_signature.tone == "aggressive"
+
+    @pytest.mark.asyncio
+    async def test_elevated_pitch_shifts_to_warm(self):
+        """Pitch > 250Hz shifts formal/neutral tone to warm (US3)."""
+        tier3 = Tier3Conscious()
+        result = await tier3.process(
+            user_input="I understand the requirements.",
+            current_m=0.0,
+            average_pitch=260.0  # Elevated pitch
+        )
+        assert result.thought_signature.tone == "warm"
+
+    @pytest.mark.asyncio
+    async def test_low_pitch_shifts_to_formal(self):
+        """Pitch < 100Hz shifts casual tone to formal (US3)."""
+        tier3 = Tier3Conscious()
+        # 'yeah' usually results in 'casual' tone
+        result = await tier3.process(
+            user_input="yeah",
+            current_m=0.0,
+            average_pitch=80.0  # Deep pitch
+        )
+        assert result.thought_signature.tone == "formal"

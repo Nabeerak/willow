@@ -110,6 +110,9 @@ class UserMemory:
 
     def add_session(self, summary: SessionSummary) -> None:
         self.sessions.append(summary)
+        # Cap to 20 most recent sessions to prevent unbounded growth
+        if len(self.sessions) > 20:
+            self.sessions = self.sessions[-20:]
         self.total_turns += summary.turn_count
         # Exponential moving average of M across sessions
         alpha = 0.3

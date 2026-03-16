@@ -30,7 +30,8 @@ def _validate_sovereign_truth(
     key: str,
     assertion: str,
     contradiction_keywords: list[str],
-    response_template: str,
+    forced_prefix: str,
+    response_directive: str,
     priority: int | bool,
 ) -> None:
     """
@@ -40,7 +41,8 @@ def _validate_sovereign_truth(
         key: Unique identifier for the truth
         assertion: The factual statement
         contradiction_keywords: Non-empty list of keywords for deterministic matching
-        response_template: Pre-written persona-calibrated response text
+        forced_prefix: Exact opening words Willow must deliver
+        response_directive: LLM instruction for completing the sovereign response
         priority: Priority level (int 1-10 or boolean)
 
     Raises:
@@ -62,8 +64,11 @@ def _validate_sovereign_truth(
                 f"each contradiction keyword must be a non-empty string, got {kw!r}"
             )
 
-    if not response_template or not response_template.strip():
-        raise SovereignTruthValidationError("response_template cannot be empty")
+    if not forced_prefix or not forced_prefix.strip():
+        raise SovereignTruthValidationError("forced_prefix cannot be empty")
+
+    if not response_directive or not response_directive.strip():
+        raise SovereignTruthValidationError("response_directive cannot be empty")
 
     if not isinstance(priority, (int, bool)):
         raise SovereignTruthValidationError(
@@ -84,15 +89,15 @@ class SovereignTruth:
 
     Sovereign Truths are immutable facts that Willow will defend with confidence.
     When user context contradicts a Sovereign Truth, the Sovereign Truth wins.
-    Truths NEVER enter the LLM context window (FR-007). The response_template
-    stores persona-calibrated Tier 4 response text as data, not code (FR-008h).
+    Truths NEVER enter the LLM context window (FR-007). The forced_prefix and
+    response_directive store persona-calibrated Tier 4 response data, not code (FR-008h).
 
     Attributes:
         key: Unique identifier for the truth (e.g., 'willow_definition')
         assertion: The factual statement Willow will assert
         contradiction_keywords: Keywords enabling deterministic pattern matching
-        response_template: Pre-written Warm but Sharp persona response text, or
-            "[VACUUM_MODE]" sentinel when vacuum_mode is True
+        forced_prefix: Exact opening words Willow must deliver verbatim.
+        response_directive: LLM instruction for completing the sovereign response.
         priority: Priority level 1-10 (1 = highest priority, core identity facts)
         vacuum_mode: When True, suppress all speech; play acoustic heartbeat only
             and serve response_on_return when the user next sends a utility signal.
@@ -110,7 +115,8 @@ class SovereignTruth:
     key: str
     assertion: str
     contradiction_keywords: tuple[str, ...]
-    response_template: str
+    forced_prefix: str
+    response_directive: str
     priority: int | bool
     vacuum_mode: bool = False
     response_on_return: Optional[str] = None
@@ -128,7 +134,8 @@ class SovereignTruth:
             self.key,
             self.assertion,
             list(self.contradiction_keywords),
-            self.response_template,
+            self.forced_prefix,
+            self.response_directive,
             self.priority,
         )
 
@@ -147,7 +154,8 @@ class SovereignTruth:
             "key": self.key,
             "assertion": self.assertion,
             "contradiction_keywords": list(self.contradiction_keywords),
-            "response_template": self.response_template,
+            "forced_prefix": self.forced_prefix,
+            "response_directive": self.response_directive,
             "priority": self.priority,
             "created_at": self.created_at.isoformat(),
         }
@@ -164,7 +172,7 @@ class SovereignTruth:
 
         Args:
             data: Dictionary with key, assertion, contradiction_keywords,
-                  response_template, priority, and optional created_at
+                  forced_prefix, response_directive, priority, and optional created_at
 
         Returns:
             New SovereignTruth instance
@@ -180,7 +188,8 @@ class SovereignTruth:
             key=data["key"],
             assertion=data["assertion"],
             contradiction_keywords=tuple(data["contradiction_keywords"]),
-            response_template=data["response_template"],
+            forced_prefix=data["forced_prefix"],
+            response_directive=data["response_directive"],
             priority=data["priority"],
             vacuum_mode=data.get("vacuum_mode", False),
             response_on_return=data.get("response_on_return"),
@@ -347,6 +356,7 @@ class SovereignTruthCache:
         self._maxsize = maxsize
         self._top_10_keys: List[str] = []
         self._embedding_service: Optional["EmbeddingService"] = None
+        self._last_semantic_match_keys: set = set()
 
     def load_from_json(self, filepath: str | Path) -> int:
         """
@@ -396,7 +406,7 @@ class SovereignTruthCache:
         """Update the list of top 10 priority truth keys."""
         sorted_truths = sorted(
             self._truths.values(),
-            key=lambda t: (0 if t.priority is True else t.priority)
+            key=lambda t: t.priority if isinstance(t.priority, int) else (1 if t.priority else 999)
         )
         self._top_10_keys = [t.key for t in sorted_truths[:self._maxsize]]
 
@@ -553,10 +563,13 @@ class SovereignTruthCache:
         finds no candidates and EmbeddingService is available.
         """
         results = []
+        self._last_semantic_match_keys = set()
         
-        # Pass 1: Check only truths where "priority": True against user input.
+        # Pass 1: Check only highest-priority truths (priority == 1) against user input.
+        # Q5 fix: `priority is True` coerces int 1 → False in Python (`1 is True` is False).
+        # Use == 1 so both `"priority": 1` and `"priority": true` in JSON are handled.
         for truth in self._truths.values():
-            if truth.priority is True:
+            if truth.priority == 1:
                 for kw in truth.contradiction_keywords:
                     kw_norm = self._normalize_input(kw)
                     if kw_norm in normalized:
@@ -566,7 +579,7 @@ class SovereignTruthCache:
         # Pass 2: Only if Pass 1 finds no match, check remaining truths.
         if not results:
             for truth in self._truths.values():
-                if truth.priority is not True:
+                if truth.priority != 1:
                     for kw in truth.contradiction_keywords:
                         kw_norm = self._normalize_input(kw)
                         if kw_norm in normalized:
@@ -586,6 +599,7 @@ class SovereignTruthCache:
                         key, score,
                     )
                     results.append(truth)
+                    self._last_semantic_match_keys.add(key)
 
         return results
 
@@ -608,6 +622,8 @@ class SovereignTruthCache:
           is already negative (one match sufficient in established hostile
           context, but single-turn contradiction still cannot fire Tier 4
           alone without a confirming second turn — that is enforced upstream).
+        - Semantic match: if the truth was found via vector embedding
+          similarity, require at least 1 keyword match (reduced from 2).
 
         Args:
             truth: Candidate SovereignTruth from check_contradiction.
@@ -618,6 +634,16 @@ class SovereignTruthCache:
         Returns:
             True if the gate passes, False to abort Tier 4.
         """
+        # Semantic matches still require keyword overlap — vector similarity
+        # alone is not reliable enough to skip intent-level checks.
+        # If the match was semantic, lower the threshold to 1 keyword
+        # instead of bypassing entirely (prevents false positives from
+        # vague topical similarity while keeping semantic recall useful).
+        is_semantic = (
+            getattr(self, "_last_semantic_match_keys", None)
+            and truth.key in self._last_semantic_match_keys
+        )
+
         normalized = self._normalize_input(user_input)
         is_question = self._is_interrogative(normalized)
 
@@ -626,6 +652,10 @@ class SovereignTruthCache:
             for kw in truth.contradiction_keywords
             if self._normalize_input(kw) in normalized
         )
+
+        if is_semantic:
+            # Semantic match: require at least 1 keyword to confirm topical relevance
+            return match_count >= 1
 
         min_matches = 2 if (is_question or weighted_average_m >= 0) else 1
         return match_count >= min_matches
@@ -664,54 +694,18 @@ class SovereignTruthCache:
             return False
 
     # ------------------------------------------------------------------
-    # T071 — Hard exit (cancel active Gemini coroutine) (FR-008g)
-    # ------------------------------------------------------------------
-
-    @staticmethod
-    async def hard_exit(active_task) -> None:
-        """
-        Step 4: Cancel active Gemini generation coroutine before constructing
-        the programmatic Tier 4 response (FR-008g).
-
-        A return guard MUST follow this call at the call site — do not
-        continue into normal response flow after hard_exit.
-
-        Args:
-            active_task: asyncio.Task wrapping the active Gemini generation
-                coroutine, or None if no task is running.
-        """
-        import asyncio
-
-        if active_task is not None and not active_task.done():
-            active_task.cancel()
-            try:
-                await active_task
-            except asyncio.CancelledError:
-                pass  # Expected — cancellation confirmed
-
-    # ------------------------------------------------------------------
     # T072 — Response construction from response_template (FR-008h)
     # ------------------------------------------------------------------
 
     @staticmethod
     def build_response(truth: "SovereignTruth") -> str:
         """
-        Step 5: Construct Tier 4 response from the SovereignTruth data.
-
-        Templates are data, not code. Zero LLM involvement. The only
-        interpolation allowed is inserting the verbatim assertion string
-        where the placeholder {assertion} appears (FR-008h).
-
-        Vacuum mode entries ([VACUUM_MODE] sentinel) must NOT reach this
-        method — caller MUST check truth.vacuum_mode first (T035).
-
-        Args:
-            truth: The matching SovereignTruth.
-
-        Returns:
-            Rendered response string ready for audio pipeline injection.
+        DEPRECATED: Tier 4 now uses Dynamic Determinism.
+        Returns the forced_prefix as a fallback.
         """
-        return truth.response_template.format(assertion=truth.assertion)
+        if truth.vacuum_mode:
+            return ""
+        return truth.forced_prefix or "[SOVEREIGN OVERRIDE]"
 
     # ------------------------------------------------------------------
     # T073 — Synthetic turn injection (FR-008e)
@@ -725,20 +719,19 @@ class SovereignTruthCache:
         """
         Step 6: Build the synthetic assistant turn for conversation history.
 
-        Uses an f-string with exact verbatim assertion values — not
-        paraphrased (FR-008e). Returns a dict the orchestration layer
-        appends to the conversation history before the next user turn.
+        Uses the new forced_prefix logic for Dynamic Determinism (FR-008e). 
+        Returns a dict the orchestration layer appends to the conversation 
+        history before the next user turn.
 
         Args:
             truth: The SovereignTruth whose assertion was just delivered.
 
         Returns:
-            Dict with role='assistant' and content set to the verbatim
-            assertion (not the response_template).
+            Dict with role='assistant' and content set to the prefix.
         """
         return {
             "role": "assistant",
-            "content": f"{truth.assertion}",
+            "content": truth.forced_prefix or truth.assertion,
         }
 
     def find_by_keyword(self, keyword: str) -> List[SovereignTruth]:

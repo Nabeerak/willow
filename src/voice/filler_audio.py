@@ -83,6 +83,7 @@ class FillerAudioPlayer:
     _clips: dict[str, bytes] = field(default_factory=dict, init=False, repr=False)
     _active_task: Optional[asyncio.Task] = field(default=None, init=False, repr=False)
     _websocket: Optional[object] = field(default=None, init=False, repr=False)
+    _filler_active: asyncio.Event = field(default_factory=asyncio.Event, init=False, repr=False)
 
     def set_websocket(self, websocket: Optional[object]) -> None:
         """
@@ -155,6 +156,7 @@ class FillerAudioPlayer:
         Returns:
             True if clip started, False if clip not loaded.
         """
+        logger.info(f"FILLER PLAYING: clip={clip_name}")
         raw_pcm = self._clips.get(clip_name)
         if raw_pcm is None:
             logger.debug("Filler clip '%s' not loaded — skipping playback", clip_name)
@@ -169,78 +171,90 @@ class FillerAudioPlayer:
         )
         return True
 
-    async def _play_clip(self, clip_name: str, raw_pcm: bytes) -> None:
-        """
-        Send PCM bytes to the client WebSocket, then hold for playback duration.
-
-        Sends the full clip as a single binary WebSocket frame — the same path
-        Gemini audio chunks use. The browser's AudioWorklet receives the bytes,
-        decodes them as 16kHz/16-bit/mono PCM, and plays them immediately.
-
-        Duration hold ensures the filler is audible before Gemini's response
-        arrives. asyncio.CancelledError fires if the user speaks mid-clip (T051).
-        """
-        # 16kHz * 2 bytes/sample * 1 channel = 32000 bytes per second
-        duration_s = len(raw_pcm) / 32_000
-        logger.debug(
-            "Filler playback started: clip='%s' duration=%.0fms",
-            clip_name, duration_s * 1000,
-        )
-        start = time.perf_counter()
-        try:
-            # Send PCM bytes to browser over the live WebSocket connection
-            ws = self._websocket
-            if ws is not None:
-                try:
-                    if hasattr(ws, 'send_bytes'):
-                        await ws.send_bytes(raw_pcm)   # FastAPI WebSocket
-                    else:
-                        await ws.send(raw_pcm)         # websockets library
-                except Exception as exc:
-                    logger.debug("Filler WebSocket send failed: %s", exc)
-            else:
-                logger.debug("Filler clip '%s': no WebSocket — output suppressed", clip_name)
-
-            # Hold for the clip's natural duration so the browser plays it
-            # before Gemini's response bytes start arriving
-            await asyncio.sleep(duration_s)
-
-            elapsed_ms = (time.perf_counter() - start) * 1000
-            logger.debug(
-                "Filler playback complete: clip='%s' elapsed=%.1fms",
-                clip_name, elapsed_ms,
-            )
-        except asyncio.CancelledError:
-            elapsed_ms = (time.perf_counter() - start) * 1000
-            logger.debug(
-                "Filler playback cancelled: clip='%s' after=%.1fms",
-                clip_name, elapsed_ms,
-            )
-            raise
-
     def cancel(self) -> bool:
         """
         Cancel active filler playback (T051 — VAD-based cancellation).
 
         Called from InterruptionHandler when user speech is detected
-        while a filler clip is playing.
+        while a filler clip is playing, or when Gemini's real audio
+        starts streaming to avoid overlap.
 
         Returns:
             True if a task was cancelled, False if nothing was playing.
         """
+        cancelled = False
         if self._active_task and not self._active_task.done():
+            logger.debug("Canceling active filler audio playback")
             self._active_task.cancel()
-            logger.debug("Filler playback cancelled by caller")
-            return True
-        return False
+            cancelled = True
+        
+        # Ensure state is cleared immediately even if task cancellation 
+        # is still propagating through the event loop
+        self._filler_active.clear()
+        return cancelled
 
     @property
     def is_playing(self) -> bool:
-        """True if a filler clip is currently in progress."""
-        return (
-            self._active_task is not None
-            and not self._active_task.done()
+        """Return True if filler audio is currently playing."""
+        return self._filler_active.is_set()
+
+    async def _play_clip(self, clip_name: str, raw_pcm: bytes) -> None:
+        """
+        Send PCM bytes to the client WebSocket in small chunks (FR-010, T048).
+
+        Sends the clip in 20ms chunks — the same path Gemini audio chunks use. 
+        The browser's AudioWorklet receives the bytes, decodes them as 
+        16kHz/16-bit/mono PCM, and plays them immediately.
+
+        Streaming in chunks allows cancellation (barge-in or real Gemini audio
+        starting) to actually stop the network transfer and browser playback,
+        preventing audio overlap.
+        """
+        # 24kHz * 2 bytes/sample * 1 channel = 48000 bytes per second
+        duration_s = len(raw_pcm) / 48_000
+        logger.debug(
+            "Filler playback started: clip='%s' duration=%.0fms",
+            clip_name, duration_s * 1000,
         )
+        start = time.perf_counter()
+        self._filler_active.set()
+
+        chunk_size = 960   # 20ms of PCM data (48000 bytes/s * 0.020)
+        sleep_duration = 0.020
+        
+        try:
+            ws = self._websocket
+            for i in range(0, len(raw_pcm), chunk_size):
+                chunk = raw_pcm[i:i+chunk_size]
+                if ws is not None:
+                    try:
+                        if hasattr(ws, 'send_bytes'):
+                            await ws.send_bytes(chunk)   # FastAPI WebSocket
+                        else:
+                            await ws.send(chunk)         # websockets library
+                    except Exception as exc:
+                        logger.debug("Filler WebSocket send failed: %s", exc)
+                        break
+                
+                # Check cancellation between chunks
+                await asyncio.sleep(sleep_duration)
+            
+            elapsed = (time.perf_counter() - start) * 1000
+            logger.debug(
+                "Filler playback completed naturally: clip='%s' elapsed=%.0fms",
+                clip_name, elapsed,
+            )
+            
+        except asyncio.CancelledError:
+            elapsed = (time.perf_counter() - start) * 1000
+            logger.info(
+                "Filler playback canceled at %.0fms (cut short by %dms)",
+                elapsed, (duration_s * 1000) - elapsed,
+            )
+            # Re-raise so the task resolves properly
+            raise
+        finally:
+            self._filler_active.clear()
 
     def get_loaded_clips(self) -> list[str]:
         """Return sorted list of successfully loaded clip names."""

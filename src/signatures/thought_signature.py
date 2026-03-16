@@ -106,8 +106,10 @@ def _validate_thought_signature(
             f"m_modifier must be a number, got {type(m_modifier).__name__}"
         )
 
-    # Per Constitution Principle V: +/-2.0 state change cap
-    if m_modifier < -2.0 or m_modifier > 2.0:
+    # Per Constitution Principle V: +/-2.0 state change cap.
+    # Exception: devaluing intent allows -5.0 (Sovereign Spike).
+    is_sovereign_spike = (intent == "devaluing" and m_modifier == -5.0)
+    if not is_sovereign_spike and (m_modifier < -2.0 or m_modifier > 2.0):
         raise ThoughtSignatureValidationError(
             f"m_modifier must be within +/-2.0 range, got {m_modifier}"
         )

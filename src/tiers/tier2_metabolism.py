@@ -38,6 +38,7 @@ _INTENT_MODIFIERS_FALLBACK: Final[dict[str, float]] = {
     "hostile": -0.5,
     "devaluing": -2.0,  # Sovereign Spike clamped value; actual spike = -(base_decay + 5.0)
     "sincere_pivot": 2.0,  # T042 / US4: Grace Boost — full +2.0 applied when current_m < 0
+    "sovereign_spike": -5.0,
 }
 
 
@@ -84,8 +85,8 @@ def map_intent_to_modifier(
         Tuple of (m_modifier, is_sovereign_spike).
     """
     if intent == "devaluing":
-        # T037: Sovereign Spike formula — -(base_decay + 5.0)
-        spike_m = -(base_decay + 5.0)
+        # T037: Sovereign Spike formula — now loaded from JSON to prevent Tier 3 mismatches
+        spike_m = _load_m_modifiers().get("sovereign_spike", -5.0)
         return (spike_m, True)
     if intent == "sincere_pivot":
         # T042 / US4: Grace Boost (+2.0) — caller must check current_m < 0
@@ -195,16 +196,16 @@ class Tier2Metabolism:
             base_decay: The base decay rate to incorporate into the spike.
 
         Returns:
-            The negative spike value: -(base_decay + 5.0).
+            The negative spike value loaded from JSON.
 
         Example:
             >>> metabolism = Tier2Metabolism()
             >>> metabolism.calculate_sovereign_spike(-0.1)
-            -4.9
+            -5.0
             >>> metabolism.calculate_sovereign_spike(0.0)
             -5.0
         """
-        return -(base_decay + 5.0)
+        return _load_m_modifiers().get("sovereign_spike", -5.0)
 
     def calculate_state_update(
         self,

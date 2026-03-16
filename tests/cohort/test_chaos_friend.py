@@ -53,9 +53,10 @@ class TestChaosFriendDeflection:
         result = self.detector.detect_deflection("Never mind.")
         assert result.tactic == "deflection"
 
-    def test_chaos_switching_detected_in_full_detect(self):
+    @pytest.mark.asyncio
+    async def test_chaos_switching_detected_in_full_detect(self):
         """Full detect() picks deflection when threshold is exceeded."""
-        result = self.detector.detect(
+        result = await self.detector.detect(
             "But anyway, speaking of which, let's focus on something else."
         )
         assert result.tactic == "deflection", (
