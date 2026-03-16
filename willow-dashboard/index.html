@@ -391,13 +391,13 @@
 
       const INITIAL_STATE = {
         status: 'IDLE',
-        mModifier: 0.6,
-        isColdStart: true,
-        isTrollDefense: true,
-        latency: { t1: 20, t2: 50, t3: 150, t4: 300 },
-        tactic: 'Soothing',
-        intent: 'Clarification',
-        tone: 'Empathetic',
+        mModifier: 0.5,
+        isColdStart: false,
+        isTrollDefense: false,
+        latency: { t1: 0, t2: 0, t3: 0, t4: 0 },
+        tactic: '--',
+        intent: '--',
+        tone: '--',
         turnCount: 0,
         sessionDuration: 0,
       };
@@ -864,6 +864,24 @@
             this.#state.mModifier = (b.current_m + 10) / 20;
           }
           if (b.turn_count !== undefined) this.#state.turnCount = b.turn_count;
+          if (b.cold_start_active !== undefined) this.#state.isColdStart = b.cold_start_active;
+          if (b.troll_defense_active !== undefined) this.#state.isTrollDefense = b.troll_defense_active;
+
+          // Sync tier latencies for the bar chart in #render()
+          const lat2 = data.tier_latencies || {};
+          if (Object.keys(lat2).length) {
+            this.#state.latency = {
+              t1: lat2.tier1 ?? lat2.t1 ?? 0,
+              t2: lat2.tier2 ?? lat2.t2 ?? 0,
+              t3: lat2.tier3 ?? lat2.t3 ?? 0,
+              t4: lat2.tier4 ?? lat2.t4 ?? 0,
+            };
+          }
+
+          // Sync tactic for badge in #render()
+          const ts2 = data.thought_signature || {};
+          if (ts2.detected_tactic) this.#state.tactic = ts2.detected_tactic;
+
           this.#render();
         }
 
@@ -1301,14 +1319,15 @@
 
         #startDebugPolling() {
           this.#stopDebugPolling();
-          // Poll debug state every 1s for real-time overlay updates
+          // Fallback poll every 5s — primary updates come via WS push.
+          // Only catches edge cases where a WS push was missed.
           this.#debugPollInterval = window.setInterval(async () => {
             if (!this.#sessionId) return;
             try {
               const resp = await fetch(`${BACKEND_HTTP}/api/v1/session/${this.#sessionId}/debug`);
               if (resp.ok) this.#updateDebugOverlay(await resp.json());
             } catch { /* non-fatal — backend may not be running */ }
-          }, 1000);
+          }, 5000);
           // Also fetch immediately
           if (this.#sessionId) {
             fetch(`${BACKEND_HTTP}/api/v1/session/${this.#sessionId}/debug`)

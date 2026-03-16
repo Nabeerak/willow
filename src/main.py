@@ -759,8 +759,9 @@ class WillowAgent:
             if directive:
                 logger.info("DIRECTIVE SENT: '%s'", directive[:80])
 
-            # Push live state to dashboard over the same WebSocket (Gap 1)
-            # Dashboard handles {"type": "debug_state", "data": {...}} at line 923 of index.html
+            # Push live state to dashboard — immediate update for m-value,
+            # turn count, latencies, tone zone. ThoughtSignature may still be
+            # None here (Tier 3 runs as background task and pushes its own update).
             await self.send_client_command("debug_state", data=self.get_debug_state())
 
         except Exception as e:
@@ -1454,14 +1455,13 @@ class WillowAgent:
         user_input: str,
         state: SessionState
     ) -> bool:
-        """Determine if Tier 3 processing is needed."""
-        # Trigger Tier 3 every 2-3 turns for periodic analysis
-        if state.turn_count % 2 == 0:
-            return True
+        """Determine if Tier 3 processing is needed.
 
-        # Check tactic-trigger patterns loaded from willow_keywords.json
-        input_lower = user_input.lower()
-        return any(pattern in input_lower for pattern in _load_tier3_trigger_patterns())
+        Always returns True — ThoughtSignature must be generated every turn
+        so the dashboard debug overlay stays current and behavioral injection
+        always has fresh intent/tone/tactic data.
+        """
+        return True
 
     async def _process_tier3(
         self,
@@ -1518,6 +1518,13 @@ class WillowAgent:
             state_snapshot = self.state_manager.get_snapshot()
             state_snapshot.last_thought_signature = result.thought_signature
             state_snapshot.last_response_source = "gemini"
+
+            # Push updated debug state to dashboard — Tier 3 runs as a background
+            # task so the push in _on_gemini_turn_complete fires before this completes.
+            try:
+                await self.send_client_command("debug_state", data=self.get_debug_state())
+            except Exception:
+                pass  # non-fatal — WS may have closed
 
             # T052 / US5: Log TierTrigger when filler threshold exceeded.
             # Q20: Skip if Tier 4 already fired this turn — prevents the
@@ -1669,6 +1676,13 @@ class WillowAgent:
                     triggered_at=result.tier_trigger.triggered_at,
                 )
                 log_tier_trigger(trigger_with_filler)
+
+            # Push debug state immediately when Tier 4 fires — judges need
+            # to see sovereign gates and response_source change in real time.
+            try:
+                await self.send_client_command("debug_state", data=self.get_debug_state())
+            except Exception:
+                pass
 
         return result
 
