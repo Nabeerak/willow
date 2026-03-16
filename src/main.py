@@ -635,6 +635,7 @@ class WillowAgent:
         # a phantom turn from the aborted exchange.
         if getattr(turn, 'was_interrupted', False):
             logger.debug("Interrupted turn — skipping behavioral pipeline")
+            # Mic gate was never closed for interruptions — nothing to reset.
             return
 
         # FIX 6: Late agent transcription callback — gemini_live.py fires a
@@ -647,125 +648,130 @@ class WillowAgent:
             async with self.state_manager._lock:
                 self.state_manager._state.last_agent_response = agent_text
             logger.debug("Late agent transcription received — updating last_agent_response only")
+            # Mic gate already reopened by the main TurnComplete callback — no-op.
             return
 
-        # Pipeline runs on every turn completion regardless of
-        # transcript availability. Transcripts used for tactic
-        # detection only — not for pipeline activation.
-        if not user_transcript:
-            user_transcript = "[audio turn]"
+        try:
+            # Pipeline runs on every turn completion regardless of
+            # transcript availability. Transcripts used for tactic
+            # detection only — not for pipeline activation.
+            if not user_transcript:
+                user_transcript = "[audio turn]"
 
-        # Send user transcript to frontend
-        await self.send_client_command(
-            "turn_complete",
-            user_text=user_transcript,
-            text=agent_text,
-        )
-
-        result = await self.handle_user_input(
-            user_input=user_transcript,
-            transcription_confidence=getattr(turn, 'confidence', 1.0),
-            average_pitch=getattr(turn, 'average_pitch', 0.0),
-        )
-
-        # Override last_agent_response with the real Gemini transcription.
-        # handle_user_input sets it to the synthetic _generate_response() output
-        # (a text-mode stub) — overwrite with actual audio transcript so that
-        # Tier 1 mirroring detection and subsequent turn analysis use real data.
-        if agent_text:
-            async with self.state_manager._lock:
-                self.state_manager._state.last_agent_response = agent_text
-
-        # On the first user turn, passively listen for a name and persist it.
-        # Never forced — if the user didn't offer one, nothing is stored.
-        state_after = self.state_manager.get_snapshot()
-        if state_after.turn_count == 1:
-            from .core.session_memory import extract_user_context
-            captured_name, _ = extract_user_context(user_transcript)
-            if captured_name:
-                safe_name = _sanitize_name(captured_name)
-                if safe_name is None:
-                    logger.warning("Rejected unsafe name: %s", captured_name[:30])
-                else:
-                    _mem = self._session_memory.load(self._current_user_id)
-                    if not _mem.user_name:
-                        _mem.user_name = safe_name
-                        self._session_memory.save(_mem)
-                        await self._streaming_session.inject_behavioral_context(
-                            f"The user's name is {safe_name}. "
-                            f"Use it naturally — once or twice this session, not every turn."
-                        )
-                        logger.info("[CONTEXT] Captured user name on turn 1: %s", safe_name)
-
-        # Compute tone directive from updated behavioral state
-        state = self.state_manager.get_snapshot()
-        style = get_response_style(
-            current_m=state.current_m,
-            turn_id=state.turn_count,
-            user_input=user_transcript,
-        )
-
-        # Fix 6: cancel filler before real response begins to prevent audio overlap
-        self._filler_player.cancel()
-
-        zone = get_m_range(state.current_m)
-        behavioral_note = self._last_behavioral_note
-        self._last_behavioral_note = None  # Consume — one-shot per turn
-        behavioral_trait = self._last_behavioral_trait
-        self._last_behavioral_trait = None  # Consume — one-shot per turn
-
-        # If Tier 4 fired, always inject the Sovereign Truth constraint.
-        directive = ""
-        if result.requires_tier4 and result.forced_prefix and result.response_directive:
-            directive = (
-                f"{result.response_directive} "
-                f'Begin your next response exactly with: "{result.forced_prefix}"'
+            # Send user transcript to frontend
+            await self.send_client_command(
+                "turn_complete",
+                user_text=user_transcript,
+                text=agent_text,
             )
-            await self._streaming_session.inject_behavioral_context(directive)
-            logger.info("T4 INJECTION SENT: single")
-            self._last_injected_zone = zone  # Reset — T4 may shift behavioral state
-        elif zone != self._last_injected_zone:
-            # Zone changed — full directive + vocal delivery + opener.
-            directive = (
-                f"{style.system_directive}\n"
-                f'Begin your next response with: "{style.opener}"'
+
+            result = await self.handle_user_input(
+                user_input=user_transcript,
+                transcription_confidence=getattr(turn, 'confidence', 1.0),
+                average_pitch=getattr(turn, 'average_pitch', 0.0),
             )
-            if behavioral_note:
-                directive += f'\nTACTIC: "{behavioral_note}"'
-            if behavioral_trait:
-                directive += f"\n{behavioral_trait}"
-            await self._streaming_session.inject_behavioral_context(directive)
-            self._last_injected_zone = zone
-            await self._streaming_session.switch_voice_for_zone(zone)
-        elif behavioral_note:
-            # Same zone, tactic fired — tactic + opener (~120 tokens cheaper than full directive).
-            opener_only = f'Begin your next response with: "{style.opener}"'
-            directive = f'TACTIC: "{behavioral_note}"'
-            if behavioral_trait:
-                directive += f" {behavioral_trait}"
-            directive += f"\n{opener_only}"
-            await self._streaming_session.inject_behavioral_context(directive)
 
-        logger.info(
-            "[BEHAVIORAL] turn=%d current_m=%.3f zone=%s directive=%r",
-            state.turn_count,
-            state.current_m,
-            zone,
-            directive[:80] if directive else "(no injection)",
-        )
-        if directive:
-            logger.info("DIRECTIVE SENT: '%s'", directive[:80])
+            # Override last_agent_response with the real Gemini transcription.
+            # handle_user_input sets it to the synthetic _generate_response() output
+            # (a text-mode stub) — overwrite with actual audio transcript so that
+            # Tier 1 mirroring detection and subsequent turn analysis use real data.
+            if agent_text:
+                async with self.state_manager._lock:
+                    self.state_manager._state.last_agent_response = agent_text
 
-        # Push live state to dashboard over the same WebSocket (Gap 1)
-        # Dashboard handles {"type": "debug_state", "data": {...}} at line 923 of index.html
-        await self.send_client_command("debug_state", data=self.get_debug_state())
+            # On the first user turn, passively listen for a name and persist it.
+            # Never forced — if the user didn't offer one, nothing is stored.
+            state_after = self.state_manager.get_snapshot()
+            if state_after.turn_count == 1:
+                from .core.session_memory import extract_user_context
+                captured_name, _ = extract_user_context(user_transcript)
+                if captured_name:
+                    safe_name = _sanitize_name(captured_name)
+                    if safe_name is None:
+                        logger.warning("Rejected unsafe name: %s", captured_name[:30])
+                    else:
+                        _mem = self._session_memory.load(self._current_user_id)
+                        if not _mem.user_name:
+                            _mem.user_name = safe_name
+                            self._session_memory.save(_mem)
+                            await self._streaming_session.inject_behavioral_context(
+                                f"The user's name is {safe_name}. "
+                                f"Use it naturally — once or twice this session, not every turn."
+                            )
+                            logger.info("[CONTEXT] Captured user name on turn 1: %s", safe_name)
 
-        # Reopen mic gate for the next user turn.
-        # end_turn closes it (_mic_active=False); without this reset the gate
-        # stays closed after Gemini responds, preventing a second turn.
-        self._mic_active = True
-        self._mic_resume_frames = 0
-        logger.debug("[TURN] Mic gate reopened after Gemini turn_complete")
+            # Compute tone directive from updated behavioral state
+            state = self.state_manager.get_snapshot()
+            style = get_response_style(
+                current_m=state.current_m,
+                turn_id=state.turn_count,
+                user_input=user_transcript,
+            )
+
+            # Fix 6: cancel filler before real response begins to prevent audio overlap
+            self._filler_player.cancel()
+
+            zone = get_m_range(state.current_m)
+            behavioral_note = self._last_behavioral_note
+            self._last_behavioral_note = None  # Consume — one-shot per turn
+            behavioral_trait = self._last_behavioral_trait
+            self._last_behavioral_trait = None  # Consume — one-shot per turn
+
+            # If Tier 4 fired, always inject the Sovereign Truth constraint.
+            directive = ""
+            if result.requires_tier4 and result.forced_prefix and result.response_directive:
+                directive = (
+                    f"{result.response_directive} "
+                    f'Begin your next response exactly with: "{result.forced_prefix}"'
+                )
+                await self._streaming_session.inject_behavioral_context(directive)
+                logger.info("T4 INJECTION SENT: single")
+                self._last_injected_zone = zone  # Reset — T4 may shift behavioral state
+            elif zone != self._last_injected_zone:
+                # Zone changed — full directive + vocal delivery + opener.
+                directive = (
+                    f"{style.system_directive}\n"
+                    f'Begin your next response with: "{style.opener}"'
+                )
+                if behavioral_note:
+                    directive += f'\nTACTIC: "{behavioral_note}"'
+                if behavioral_trait:
+                    directive += f"\n{behavioral_trait}"
+                await self._streaming_session.inject_behavioral_context(directive)
+                self._last_injected_zone = zone
+                await self._streaming_session.switch_voice_for_zone(zone)
+            elif behavioral_note:
+                # Same zone, tactic fired — tactic + opener (~120 tokens cheaper than full directive).
+                opener_only = f'Begin your next response with: "{style.opener}"'
+                directive = f'TACTIC: "{behavioral_note}"'
+                if behavioral_trait:
+                    directive += f" {behavioral_trait}"
+                directive += f"\n{opener_only}"
+                await self._streaming_session.inject_behavioral_context(directive)
+
+            logger.info(
+                "[BEHAVIORAL] turn=%d current_m=%.3f zone=%s directive=%r",
+                state.turn_count,
+                state.current_m,
+                zone,
+                directive[:80] if directive else "(no injection)",
+            )
+            if directive:
+                logger.info("DIRECTIVE SENT: '%s'", directive[:80])
+
+            # Push live state to dashboard over the same WebSocket (Gap 1)
+            # Dashboard handles {"type": "debug_state", "data": {...}} at line 923 of index.html
+            await self.send_client_command("debug_state", data=self.get_debug_state())
+
+        except Exception as e:
+            logger.error("[TURN] Pipeline error in _on_gemini_turn_complete: %s", e)
+        finally:
+            # Always reopen mic gate regardless of pipeline success/failure.
+            # end_turn closes it (_mic_active=False); without this reset the gate
+            # stays closed after Gemini responds, permanently deafening the agent.
+            self._mic_active = True
+            self._mic_resume_frames = 0
+            logger.debug("[TURN] Mic gate reopened after Gemini turn_complete")
 
     async def _on_audio_chunk(self, chunk: AudioChunk) -> None:
         """
