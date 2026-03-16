@@ -4,6 +4,8 @@
 
 Built for the **2026 Gemini Live Agent Challenge**.
 
+[![Demo Video](https://img.shields.io/badge/Demo-YouTube-red)](https://youtu.be/c0put8q_pV0)
+
 ## Architecture Overview
 
 ![Willow Architecture](architecture.svg)
