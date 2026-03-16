@@ -2,24 +2,7 @@
 # T063: Includes SHA-256 hash computation for sovereign_truths.json (FR-008j)
 
 steps:
-  # Step 1: Compute SHA-256 of sovereign_truths.json and write to Secret Manager
-  - name: 'gcr.io/cloud-builders/gcloud'
-    entrypoint: 'bash'
-    args:
-      - '-c'
-      - |
-        HASH=$(sha256sum data/sovereign_truths.json | awk '{print $1}')
-        echo "Sovereign truths hash: $${HASH}"
-        # Create or update the secret
-        if gcloud secrets describe sovereign-truths-hash --project=$PROJECT_ID 2>/dev/null; then
-          echo "$${HASH}" | gcloud secrets versions add sovereign-truths-hash \
-            --data-file=- --project=$PROJECT_ID
-        else
-          echo "$${HASH}" | gcloud secrets create sovereign-truths-hash \
-            --data-file=- --replication-policy=automatic --project=$PROJECT_ID
-        fi
-
-  # Step 2: Build the Docker image
+  # Step 1: Build the Docker image
   - name: 'gcr.io/cloud-builders/docker'
     args:
       - 'build'
@@ -54,7 +37,8 @@ steps:
       - '--memory=4Gi'
       - '--timeout=3600s'
       - '--set-env-vars=GCP_PROJECT_ID=$PROJECT_ID'
-      - '--update-secrets=GOOGLE_API_KEY=GEMINI_API_KEY:latest'
+      - '--port=8080'
+      - '--update-secrets=GEMINI_API_KEY=GEMINI_API_KEY:latest'
       - '--allow-unauthenticated'
 
 images:
