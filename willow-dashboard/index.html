@@ -274,7 +274,7 @@
 
         <!-- RIGHT: Sidebar (1/4) — Behavioral State + Plots + Badges -->
         <!-- On mobile: fixed overlay sliding from right. On desktop: normal grid column -->
-        <aside id="sidebar-panel" class="fixed md:relative top-0 right-0 h-full md:h-auto w-[75vw] md:w-auto z-40 md:z-auto translate-x-full md:translate-x-0 transition-transform duration-300 ease-in-out md:flex glass-panel flex-col p-5 gap-5 overflow-y-auto scrollbar-hide">
+        <aside id="sidebar-panel" class="fixed md:relative top-0 right-0 h-full md:h-auto w-[75vw] md:w-auto z-40 md:z-auto translate-x-full md:translate-x-0 transition-transform duration-300 ease-in-out md:flex glass-panel flex-col p-5 gap-5 overflow-y-auto">
 
           <!-- Live Behavioral State -->
           <div>
@@ -295,19 +295,6 @@
               </div>
             </div>
 
-            <!-- Thought Signature -->
-            <div class="space-y-3 mb-5">
-              <h4 class="text-[10px] font-semibold text-purple-400/70 uppercase tracking-widest border-b border-white/5 pb-2">Thought Signature</h4>
-              <div class="space-y-1.5 text-xs">
-                <div class="flex justify-between"><span class="text-white/40">intent</span><span id="dbg-intent" class="text-white/90 font-mono">--</span></div>
-                <div class="flex justify-between"><span class="text-white/40">tone</span><span id="dbg-tone" class="text-white/90 font-mono">--</span></div>
-                <div class="flex justify-between"><span class="text-white/40">tactic</span><span id="dbg-tactic" class="text-white/90 font-mono">--</span></div>
-                <div class="flex justify-between"><span class="text-white/40">m_modifier</span><span id="dbg-m-modifier" class="text-white/90 font-mono">--</span></div>
-                <div class="flex justify-between"><span class="text-white/40">tier_fired</span><span id="dbg-tier-fired" class="text-white/90 font-mono">--</span></div>
-                <div class="flex justify-between gap-2"><span class="text-white/40 shrink-0">rationale</span><span id="dbg-rationale" class="text-white/60 text-right text-[10px] truncate max-w-[140px]">--</span></div>
-              </div>
-            </div>
-
             <!-- Tier 4 Sovereign -->
             <div class="space-y-3 mb-5">
               <h4 class="text-[10px] font-semibold text-red-400/70 uppercase tracking-widest border-b border-white/5 pb-2">Tier 4 Sovereign</h4>
@@ -319,6 +306,19 @@
                 <div class="flex justify-between"><span class="text-white/40">conf</span><span id="dbg-transcription-conf" class="text-white/90 font-mono">--</span></div>
                 <div class="flex justify-between"><span class="text-white/40">vacuum</span><span id="dbg-vacuum" class="text-white/90 font-mono">--</span></div>
                 <div class="flex justify-between"><span class="text-white/40">response_src</span><span id="dbg-response-source" class="text-white/90 font-mono">--</span></div>
+              </div>
+            </div>
+
+            <!-- Thought Signature -->
+            <div class="space-y-3 mb-5">
+              <h4 class="text-[10px] font-semibold text-purple-400/70 uppercase tracking-widest border-b border-white/5 pb-2">Thought Signature</h4>
+              <div class="space-y-1.5 text-xs">
+                <div class="flex justify-between"><span class="text-white/40">intent</span><span id="dbg-intent" class="text-white/90 font-mono">--</span></div>
+                <div class="flex justify-between"><span class="text-white/40">tone</span><span id="dbg-tone" class="text-white/90 font-mono">--</span></div>
+                <div class="flex justify-between"><span class="text-white/40">tactic</span><span id="dbg-tactic" class="text-white/90 font-mono">--</span></div>
+                <div class="flex justify-between"><span class="text-white/40">m_modifier</span><span id="dbg-m-modifier" class="text-white/90 font-mono">--</span></div>
+                <div class="flex justify-between"><span class="text-white/40">tier_fired</span><span id="dbg-tier-fired" class="text-white/90 font-mono">--</span></div>
+                <div class="flex justify-between gap-2"><span class="text-white/40 shrink-0">rationale</span><span id="dbg-rationale" class="text-white/60 text-right text-[10px] truncate max-w-[140px]">--</span></div>
               </div>
             </div>
           </div>
