@@ -90,3 +90,8 @@ further.md
 
 # Claude Code
 CLAUDE.md
+
+# Stray local files
+Gemini_Generated_Image_*.png
+Generated Image*.png
+*.docx

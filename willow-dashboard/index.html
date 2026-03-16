@@ -101,7 +101,7 @@
       }
     </style>
   </head>
-  <body class="bg-[#05080F] text-white overflow-hidden h-[100dvh] w-screen selection:bg-cyan-500/30 font-sans">
+  <body class="bg-[#05080F] text-white overflow-x-hidden h-[100dvh] w-screen selection:bg-cyan-500/30 font-sans">
     <div id="app" class="h-full w-full relative flex flex-col p-4 gap-4">
       <!-- Background Gradients -->
       <div class="absolute top-0 left-0 w-full h-full overflow-hidden -z-10 pointer-events-none">
@@ -109,231 +109,182 @@
         <div class="absolute bottom-[-20%] right-[-10%] w-[60%] h-[60%] bg-cyan-900/10 rounded-full blur-[150px]"></div>
       </div>
 
-      <!-- Header -->
-      <header class="relative flex justify-between items-center shrink-0 px-4 h-[12vh]">
-        <!-- Logo -->
-        <div class="flex items-center gap-3 z-10">
-          <div class="w-10 h-10 relative">
-            <svg viewBox="0 0 100 100" fill="none" xmlns="http://www.w3.org/2000/svg" class="w-full h-full">
-              <defs>
-                <linearGradient id="logo-gradient" x1="0%" y1="0%" x2="100%" y2="100%">
-                  <stop offset="0%" stop-color="#4ade80" /> <!-- Green -->
-                  <stop offset="50%" stop-color="#60a5fa" /> <!-- Blue -->
-                  <stop offset="100%" stop-color="#a78bfa" /> <!-- Purple -->
-                </linearGradient>
-              </defs>
-              
-              <!-- Outer Circle -->
-              <circle cx="50" cy="50" r="48" stroke="url(#logo-gradient)" stroke-width="2" />
-              
-              <!-- Tree Trunk / Mic Handle -->
-              <path d="M50 85 C 50 85, 45 75, 45 65 L 45 55 C 45 55, 55 55, 55 55 L 55 65 C 55 75, 50 85, 50 85 Z" fill="url(#logo-gradient)" opacity="0.8"/>
-              
-              <!-- Mic Head / Tree Center -->
-              <rect x="42" y="35" width="16" height="22" rx="8" fill="none" stroke="url(#logo-gradient)" stroke-width="2" />
-              <line x1="42" y1="40" x2="58" y2="40" stroke="url(#logo-gradient)" stroke-width="1" opacity="0.5" />
-              <line x1="42" y1="44" x2="58" y2="44" stroke="url(#logo-gradient)" stroke-width="1" opacity="0.5" />
-              <line x1="42" y1="48" x2="58" y2="48" stroke="url(#logo-gradient)" stroke-width="1" opacity="0.5" />
-              
-              <!-- Branches (Willow Style) -->
-              <path d="M50 35 C 50 20, 20 30, 20 50" stroke="url(#logo-gradient)" stroke-width="2" stroke-linecap="round" />
-              <path d="M50 35 C 50 20, 80 30, 80 50" stroke="url(#logo-gradient)" stroke-width="2" stroke-linecap="round" />
-              
-              <path d="M50 40 C 40 30, 30 40, 30 60" stroke="url(#logo-gradient)" stroke-width="1.5" stroke-linecap="round" opacity="0.8" />
-              <path d="M50 40 C 60 30, 70 40, 70 60" stroke="url(#logo-gradient)" stroke-width="1.5" stroke-linecap="round" opacity="0.8" />
-              
-              <path d="M50 45 C 45 40, 38 45, 38 65" stroke="url(#logo-gradient)" stroke-width="1" stroke-linecap="round" opacity="0.6" />
-              <path d="M50 45 C 55 40, 62 45, 62 65" stroke="url(#logo-gradient)" stroke-width="1" stroke-linecap="round" opacity="0.6" />
-              
-              <!-- Roots -->
-              <path d="M50 85 C 40 90, 30 90, 25 85" stroke="url(#logo-gradient)" stroke-width="1.5" stroke-linecap="round" />
-              <path d="M50 85 C 60 90, 70 90, 75 85" stroke="url(#logo-gradient)" stroke-width="1.5" stroke-linecap="round" />
-            </svg>
+      <!-- Header (12% of page) -->
+      <header class="relative flex justify-center items-center shrink-0 px-4 h-[12vh]">
+        <!-- Centered content -->
+        <div class="flex items-center gap-6 z-10">
+          <!-- Logo -->
+          <div class="flex items-center gap-3">
+            <div class="w-14 h-14 relative">
+              <img src="public/logo.png" alt="Willow Logo" class="w-full h-full object-contain rounded-full" />
+            </div>
+            <span class="text-2xl font-light tracking-wide text-white">Willow</span>
           </div>
-          <span class="text-2xl font-light tracking-wide text-white">Willow <span class="font-normal text-white">Agent</span></span>
-        </div>
 
-        <!-- Status Pill -->
-        <div class="hidden md:flex items-center gap-6 glass-pill px-6 py-2.5 bg-[#111625] border border-white/10 z-10">
-          <div class="flex items-center gap-2">
-            <span class="text-sm text-gray-400">WebSocket:</span>
-            <span id="ws-status-text" class="text-sm text-green-400 font-medium">Connected</span>
-            <div id="ws-status-dot" class="w-2 h-2 rounded-full bg-green-500 shadow-[0_0_8px_rgba(34,197,94,0.6)]"></div>
-          </div>
-          <div class="w-px h-4 bg-white/10"></div>
-          <div class="flex items-center gap-2">
-             <span class="text-sm text-gray-400">Duration:</span>
-             <span id="session-timer" class="text-sm text-white font-mono">00:00</span>
-          </div>
-          <div class="w-px h-4 bg-white/10"></div>
-          <div class="flex items-center gap-2">
-             <span class="text-sm text-gray-400">Turn Counter:</span>
-             <span id="turn-counter" class="text-sm text-white font-mono">0</span>
+          <!-- Divider -->
+          <div class="hidden md:block w-px h-8 bg-white/10"></div>
+
+          <!-- Status Pill (desktop) -->
+          <div class="hidden md:flex items-center gap-6 glass-pill px-6 py-2.5 bg-[#111625] border border-white/10">
+            <div class="flex items-center gap-2">
+              <span class="text-sm text-gray-400">WebSocket:</span>
+              <span id="ws-status-text" class="text-sm text-red-400 font-medium">Disconnected</span>
+              <div id="ws-status-dot" class="w-2 h-2 rounded-full bg-red-500 shadow-[0_0_8px_rgba(239,68,68,0.6)]"></div>
+            </div>
+            <div class="w-px h-4 bg-white/10"></div>
+            <div class="flex items-center gap-2">
+               <span class="text-sm text-gray-400">Duration:</span>
+               <span id="session-timer" class="text-sm text-white font-mono">00:00</span>
+            </div>
+            <div class="w-px h-4 bg-white/10"></div>
+            <div class="flex items-center gap-2">
+               <span class="text-sm text-gray-400">Turn Counter:</span>
+               <span id="turn-counter" class="text-sm text-white font-mono">0</span>
+            </div>
           </div>
         </div>
 
-        <!-- Mobile Toggle -->
-        <button id="mobile-stats-toggle" class="lg:hidden p-2 text-white/70 hover:text-white z-10">
-          <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v18h18"/><path d="M18 17V9"/><path d="M13 17V5"/><path d="M8 17v-3"/></svg>
+        <!-- Mobile: Chart toggle button (absolute right) -->
+        <button id="mobile-chart-toggle" class="md:hidden absolute right-4 top-1/2 -translate-y-1/2 p-2.5 rounded-xl bg-[#1A2030] border border-white/10 text-white/70 hover:text-white hover:border-white/20 transition-all z-10">
+          <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v18h18"/><path d="M18 17V9"/><path d="M13 17V5"/><path d="M8 17v-3"/></svg>
         </button>
       </header>
+
+      <!-- Mobile Status Bar -->
+      <div class="md:hidden flex items-center justify-center gap-4 glass-pill mx-auto px-4 py-2 bg-[#111625] border border-white/10 shrink-0">
+        <div class="flex items-center gap-1.5">
+          <div id="ws-status-dot-mobile" class="w-2 h-2 rounded-full bg-red-500 shadow-[0_0_8px_rgba(239,68,68,0.6)]"></div>
+          <span id="ws-status-text-mobile" class="text-xs text-red-400 font-medium">Disconnected</span>
+        </div>
+        <div class="w-px h-3 bg-white/10"></div>
+        <div class="flex items-center gap-1.5">
+          <span class="text-xs text-gray-400">Duration:</span>
+          <span id="mobile-session-timer" class="text-xs text-white font-mono">00:00</span>
+        </div>
+        <div class="w-px h-3 bg-white/10"></div>
+        <div class="flex items-center gap-1.5">
+          <span class="text-xs text-gray-400">Turns:</span>
+          <span id="mobile-turn-counter" class="text-xs text-white font-mono">0</span>
+        </div>
+      </div>
 
       <!-- Toast Container -->
       <div id="toast-container" class="fixed top-4 right-4 z-50 flex flex-col gap-2 pointer-events-none"></div>
 
-      <!-- Main Layout -->
-      <main class="flex-1 flex flex-col gap-4 min-h-0 relative overflow-y-auto scrollbar-hide pb-4">
-        
-        <!-- Top Section: Mic Panel and Right Panel -->
-        <div class="grid grid-cols-1 lg:grid-cols-8 gap-4 shrink-0" style="height: 55vh;">
-          
-          <!-- Mic & Transcript Panel -->
-          <section class="glass-panel lg:col-span-5 flex flex-col relative overflow-hidden h-full">
-            <!-- Header -->
-            <div class="p-4 lg:p-6 pb-2 border-b border-white/5 flex justify-between items-center shrink-0">
-              <h3 class="text-sm font-medium text-white">Transcript</h3>
-              <!-- Session Status Badge -->
-              <div id="session-status-badge" class="px-3 py-1 rounded-full bg-white/5 border border-white/10 text-[10px] font-mono uppercase tracking-wider text-gray-400 transition-colors duration-300">
-                Idle
-              </div>
+      <!-- Main Layout: 2 columns on desktop, single column on mobile -->
+      <main class="flex-1 grid grid-cols-1 md:grid-cols-[3fr_1fr] gap-4 min-h-0 relative pb-4">
+
+        <!-- LEFT: Mic & Transcript Panel (3/4 on desktop, full on mobile) -->
+        <section class="glass-panel flex flex-col relative overflow-hidden">
+          <!-- Header -->
+          <div class="p-4 lg:p-6 pb-2 border-b border-white/5 flex justify-between items-center shrink-0">
+            <h3 class="text-sm font-medium text-white">Transcript</h3>
+            <!-- Session Status Badge -->
+            <div id="session-status-badge" class="px-3 py-1 rounded-full bg-white/5 border border-white/10 text-[10px] font-mono uppercase tracking-wider text-gray-400 transition-colors duration-300">
+              Idle
             </div>
-
-            <!-- Transcript Area -->
-            <div class="flex-1 overflow-y-auto p-4 lg:p-6 scrollbar-hide relative mask-gradient-y min-h-0">
-              <div id="transcript-container" class="flex flex-col gap-6 pt-4 pb-12">
-                <!-- Messages -->
-                <div class="flex flex-col gap-1 opacity-60">
-                  <span class="text-xs text-gray-500 font-mono">Willow:</span>
-                  <p class="text-base font-light text-gray-300 leading-relaxed">Ready to begin session.</p>
-                </div>
-              </div>
-              
-              <!-- Interruption Ripple (Visual Only for now) -->
-              <div id="interruption-indicator" class="absolute top-1/2 right-4 lg:right-10 transform -translate-y-1/2 pointer-events-none opacity-0 transition-opacity duration-300 flex items-center gap-4">
-                 <span class="text-xs text-gray-400 font-mono hidden sm:inline">Interruption Detected</span>
-                 <div class="relative">
-                   <div class="w-2 h-2 bg-blue-500 rounded-full"></div>
-                   <div class="absolute inset-0 w-full h-full border border-blue-500 rounded-full animate-[ping_1.5s_infinite]"></div>
-                   <div class="absolute inset-[-4px] w-[calc(100%+8px)] h-[calc(100%+8px)] border border-blue-500/50 rounded-full animate-[ping_1.5s_infinite_0.2s]"></div>
-                 </div>
-                 <svg class="w-8 h-8 lg:w-12 lg:h-12 text-gray-600 transform rotate-180" viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M3 12h18M3 12l6-6M3 12l6 6" stroke-width="1"/></svg>
-              </div>
-            </div>
-
-            <!-- Mic & Visualizer Area -->
-            <div class="relative p-4 lg:p-6 pt-0 mt-auto flex flex-col items-center justify-end shrink-0">
-              
-              <!-- Thinking Status -->
-              <div id="thinking-status" class="absolute top-4 left-4 lg:top-10 lg:left-10 opacity-0 transition-opacity duration-300 flex items-center gap-2">
-                <div class="flex space-x-1">
-                  <div class="w-1 h-1 bg-blue-400 rounded-full animate-bounce"></div>
-                  <div class="w-1 h-1 bg-blue-400 rounded-full animate-bounce delay-100"></div>
-                  <div class="w-1 h-1 bg-blue-400 rounded-full animate-bounce delay-200"></div>
-                </div>
-                <span class="text-xs font-mono text-blue-400">Thinking...</span>
-              </div>
-
-              <!-- Mic Button -->
-              <div class="relative z-10 mb-4 lg:mb-8">
-                 <!-- Pre-flight Badge -->
-                 <div id="preflight-timer" class="absolute top-1/2 left-full ml-4 lg:ml-6 transform -translate-y-1/2 flex items-center gap-2 px-3 py-1.5 rounded-full bg-[#1A2030] border border-red-500/30 text-red-400 opacity-0 transition-opacity duration-300 whitespace-nowrap z-20">
-                   <svg class="w-3 h-3 animate-spin" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83"/></svg>
-                   <span class="text-xs font-mono">Pre-flight: <span id="preflight-count">3</span>s</span>
-                 </div>
-
-                 <!-- Button -->
-                 <button id="mic-btn" class="group relative w-20 h-20 lg:w-24 lg:h-24 rounded-full bg-gradient-to-b from-[#2A3040] to-[#0B0F1A] border border-white/10 shadow-[0_0_40px_rgba(59,130,246,0.1)] flex items-center justify-center transition-all duration-300 hover:scale-105 active:scale-95">
-                   <!-- Glow Ring -->
-                   <div class="absolute inset-[-4px] rounded-full border border-blue-500/30 opacity-0 group-hover:opacity-100 transition-opacity duration-500"></div>
-                   <div class="absolute inset-[-12px] rounded-full border border-blue-500/10 opacity-0 group-hover:opacity-100 transition-opacity duration-500"></div>
-                   
-                   <!-- Icon -->
-                   <svg id="mic-icon" class="w-6 h-6 lg:w-8 lg:h-8 text-white transition-all duration-300" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor">
-                     <path d="M12 14c1.66 0 3-1.34 3-3V5c0-1.66-1.34-3-3-3S9 3.34 9 5v6c0 1.66 1.34 3 3 3z"/>
-                     <path d="M17 11c0 2.76-2.24 5-5 5s-5-2.24-5-5H5c0 3.53 2.61 6.43 6 6.92V21h2v-3.08c3.39-.49 6-3.39 6-6.92h-2z"/>
-                   </svg>
-
-                   <!-- Progress Ring -->
-                   <svg class="absolute inset-0 w-full h-full rotate-[-90deg] pointer-events-none">
-                     <circle id="mic-progress" cx="50%" cy="50%" r="46%" fill="none" stroke="#3b82f6" stroke-width="2" stroke-dasharray="289" stroke-dashoffset="289" class="transition-all duration-[3000ms] ease-linear" />
-                   </svg>
-                 </button>
-                 
-                 <div class="absolute top-1/2 right-full mr-4 lg:mr-6 transform -translate-y-1/2 px-3 py-1.5 rounded-full bg-[#1A2030] border border-white/5 text-gray-400 text-xs whitespace-nowrap hidden sm:block">
-                   Mic Button
-                 </div>
-              </div>
-
-              <!-- Visualizer -->
-              <div class="w-full h-12 lg:h-16 relative flex items-end gap-0.5 opacity-80">
-                <canvas id="audio-visualizer" class="w-full h-full"></canvas>
-                
-                <!-- Threshold Line -->
-                <div class="absolute bottom-[20%] left-0 w-full h-px bg-red-500/30 border-t border-dashed border-red-500/50"></div>
-                <div class="absolute left-0 bottom-[20%] transform -translate-y-1/2 text-[10px] font-mono text-red-400/50 px-1 bg-[#0B0F1A]/50">RMS -50dB</div>
-                
-                <!-- Noise Gate Indicator -->
-                <div id="noise-gate-indicator" class="absolute right-[20%] top-0 h-full w-px bg-cyan-500/50 flex flex-col items-center opacity-0 transition-opacity duration-200">
-                   <div class="w-2 h-2 bg-cyan-500 rounded-full shadow-[0_0_10px_rgba(6,182,212,0.8)]"></div>
-                   <div class="mt-auto mb-2 text-[10px] font-mono text-cyan-400 whitespace-nowrap bg-[#0B0F1A]/80 px-1 rounded">Gate Active</div>
-                </div>
-              </div>
-              <div class="w-full flex justify-between text-[10px] text-gray-600 font-mono mt-2 uppercase tracking-wider">
-                <span>Microphone Level</span>
-                <span>Noise Gate Active</span>
-              </div>
-
-            </div>
-          </section>
-
-          <!-- Right Panel: Plots & Badges -->
-          <aside class="glass-panel flex flex-col p-6 gap-6 lg:col-span-3 h-full overflow-y-auto scrollbar-hide">
-            <div class="space-y-6 flex-1">
-              <div>
-                <div class="text-[10px] text-white/40 uppercase mb-2">Residual Plot</div>
-                <canvas id="dbg-residual-canvas" width="240" height="50" class="w-full rounded border border-white/5 bg-black/20"></canvas>
-                <div class="flex justify-between mt-1"><span class="text-[9px] text-white/40">weighted_avg</span><span id="dbg-weighted-avg-plot" class="text-[9px] text-white/90 font-mono">--</span></div>
-              </div>
-              <div>
-                <div class="text-[10px] text-white/40 uppercase mb-2">Tier Latencies</div>
-                <div class="space-y-1" id="dbg-latencies">
-                  <div class="text-white/30 text-[10px]">Waiting for first turn...</div>
-                </div>
-              </div>
-            </div>
-
-            <!-- Badges -->
-            <div class="flex flex-col gap-3 mt-auto shrink-0">
-              <div id="badge-cold-start" class="flex items-center justify-between px-4 py-3 rounded-xl bg-[#1A2030] border border-white/5 opacity-50 transition-all duration-300">
-                <div class="flex items-center gap-2">
-                  <span class="text-yellow-500">❄</span>
-                  <span class="text-xs text-gray-300 font-medium">Cold Start</span>
-                </div>
-                <div class="w-2 h-2 rounded-full bg-green-500"></div>
-              </div>
-              <div id="badge-troll-defense" class="flex items-center justify-between px-4 py-3 rounded-xl bg-[#1A2030] border border-white/5 opacity-50 transition-all duration-300">
-                 <div class="flex items-center gap-2">
-                  <span class="text-green-500">🛡</span>
-                  <span class="text-xs text-gray-300 font-medium">Troll Defense Active</span>
-                </div>
-                <div class="w-2 h-2 rounded-full bg-green-500"></div>
-              </div>
-            </div>
-          </aside>
-
-        </div>
-
-        <!-- Bottom Section: Live Behavioral State -->
-        <section class="glass-panel p-6 shrink-0">
-          <div class="flex items-center justify-between mb-6">
-            <h3 class="text-sm font-medium text-white uppercase tracking-widest text-blue-400">Live Behavioral State</h3>
           </div>
 
-          <div class="grid grid-cols-1 md:grid-cols-3 gap-8">
+          <!-- Transcript Area -->
+          <div class="flex-1 overflow-y-auto p-4 lg:p-6 scrollbar-hide relative mask-gradient-y min-h-0">
+            <div id="transcript-container" class="flex flex-col gap-6 pt-4 pb-12">
+              <!-- Messages -->
+              <div class="flex flex-col gap-1 opacity-60">
+                <span class="text-xs text-gray-500 font-mono">Willow:</span>
+                <p class="text-base font-light text-gray-300 leading-relaxed">Ready to begin session.</p>
+              </div>
+            </div>
+
+            <!-- Interruption Ripple -->
+            <div id="interruption-indicator" class="absolute top-1/2 right-4 lg:right-10 transform -translate-y-1/2 pointer-events-none opacity-0 transition-opacity duration-300 flex items-center gap-4">
+               <span class="text-xs text-gray-400 font-mono hidden sm:inline">Interruption Detected</span>
+               <div class="relative">
+                 <div class="w-2 h-2 bg-blue-500 rounded-full"></div>
+                 <div class="absolute inset-0 w-full h-full border border-blue-500 rounded-full animate-[ping_1.5s_infinite]"></div>
+                 <div class="absolute inset-[-4px] w-[calc(100%+8px)] h-[calc(100%+8px)] border border-blue-500/50 rounded-full animate-[ping_1.5s_infinite_0.2s]"></div>
+               </div>
+               <svg class="w-8 h-8 lg:w-12 lg:h-12 text-gray-600 transform rotate-180" viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M3 12h18M3 12l6-6M3 12l6 6" stroke-width="1"/></svg>
+            </div>
+          </div>
+
+          <!-- Mic & Visualizer Area -->
+          <div class="relative p-4 lg:p-6 pt-0 mt-auto flex flex-col items-center justify-end shrink-0">
+
+            <!-- Thinking Status -->
+            <div id="thinking-status" class="absolute top-4 left-4 lg:top-10 lg:left-10 opacity-0 transition-opacity duration-300 flex items-center gap-2">
+              <div class="flex space-x-1">
+                <div class="w-1 h-1 bg-blue-400 rounded-full animate-bounce"></div>
+                <div class="w-1 h-1 bg-blue-400 rounded-full animate-bounce delay-100"></div>
+                <div class="w-1 h-1 bg-blue-400 rounded-full animate-bounce delay-200"></div>
+              </div>
+              <span class="text-xs font-mono text-blue-400">Thinking...</span>
+            </div>
+
+            <!-- Mic Button -->
+            <div class="relative z-10 mb-4 lg:mb-8">
+               <!-- Pre-flight Badge -->
+               <div id="preflight-timer" class="absolute top-1/2 left-full ml-4 lg:ml-6 transform -translate-y-1/2 flex items-center gap-2 px-3 py-1.5 rounded-full bg-[#1A2030] border border-red-500/30 text-red-400 opacity-0 transition-opacity duration-300 whitespace-nowrap z-20">
+                 <svg class="w-3 h-3 animate-spin" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83"/></svg>
+                 <span class="text-xs font-mono">Pre-flight: <span id="preflight-count">3</span>s</span>
+               </div>
+
+               <!-- Button -->
+               <button id="mic-btn" class="group relative w-20 h-20 lg:w-24 lg:h-24 rounded-full bg-gradient-to-b from-[#2A3040] to-[#0B0F1A] border border-white/10 shadow-[0_0_40px_rgba(59,130,246,0.1)] flex items-center justify-center transition-all duration-300 hover:scale-105 active:scale-95">
+                 <!-- Glow Ring -->
+                 <div class="absolute inset-[-4px] rounded-full border border-blue-500/30 opacity-0 group-hover:opacity-100 transition-opacity duration-500"></div>
+                 <div class="absolute inset-[-12px] rounded-full border border-blue-500/10 opacity-0 group-hover:opacity-100 transition-opacity duration-500"></div>
+
+                 <!-- Icon -->
+                 <svg id="mic-icon" class="w-6 h-6 lg:w-8 lg:h-8 text-white transition-all duration-300" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor">
+                   <path d="M12 14c1.66 0 3-1.34 3-3V5c0-1.66-1.34-3-3-3S9 3.34 9 5v6c0 1.66 1.34 3 3 3z"/>
+                   <path d="M17 11c0 2.76-2.24 5-5 5s-5-2.24-5-5H5c0 3.53 2.61 6.43 6 6.92V21h2v-3.08c3.39-.49 6-3.39 6-6.92h-2z"/>
+                 </svg>
+
+                 <!-- Progress Ring -->
+                 <svg class="absolute inset-0 w-full h-full rotate-[-90deg] pointer-events-none">
+                   <circle id="mic-progress" cx="50%" cy="50%" r="46%" fill="none" stroke="#3b82f6" stroke-width="2" stroke-dasharray="289" stroke-dashoffset="289" class="transition-all duration-[3000ms] ease-linear" />
+                 </svg>
+               </button>
+
+               <div class="absolute top-1/2 right-full mr-4 lg:mr-6 transform -translate-y-1/2 px-3 py-1.5 rounded-full bg-[#1A2030] border border-white/5 text-gray-400 text-xs whitespace-nowrap hidden sm:block">
+                 Mic Button
+               </div>
+            </div>
+
+            <!-- Visualizer -->
+            <div class="w-full h-12 lg:h-16 relative flex items-end gap-0.5 opacity-80">
+              <canvas id="audio-visualizer" class="w-full h-full"></canvas>
+
+              <!-- Threshold Line -->
+              <div class="absolute bottom-[20%] left-0 w-full h-px bg-red-500/30 border-t border-dashed border-red-500/50"></div>
+              <div class="absolute left-0 bottom-[20%] transform -translate-y-1/2 text-[10px] font-mono text-red-400/50 px-1 bg-[#0B0F1A]/50">RMS -50dB</div>
+
+              <!-- Noise Gate Indicator -->
+              <div id="noise-gate-indicator" class="absolute right-[20%] top-0 h-full w-px bg-cyan-500/50 flex flex-col items-center opacity-0 transition-opacity duration-200">
+                 <div class="w-2 h-2 bg-cyan-500 rounded-full shadow-[0_0_10px_rgba(6,182,212,0.8)]"></div>
+                 <div class="mt-auto mb-2 text-[10px] font-mono text-cyan-400 whitespace-nowrap bg-[#0B0F1A]/80 px-1 rounded">Gate Active</div>
+              </div>
+            </div>
+            <div class="w-full flex justify-between text-[10px] text-gray-600 font-mono mt-2 uppercase tracking-wider">
+              <span>Microphone Level</span>
+              <span>Noise Gate Active</span>
+            </div>
+
+          </div>
+        </section>
+
+        <!-- RIGHT: Sidebar (1/4) — Behavioral State + Plots + Badges -->
+        <!-- On mobile: fixed overlay sliding from right. On desktop: normal grid column -->
+        <aside id="sidebar-panel" class="fixed md:relative top-0 right-0 h-full md:h-auto w-[75vw] md:w-auto z-40 md:z-auto translate-x-full md:translate-x-0 transition-transform duration-300 ease-in-out md:flex glass-panel flex-col p-5 gap-5 overflow-y-auto scrollbar-hide">
+
+          <!-- Live Behavioral State -->
+          <div>
+            <h3 class="text-[10px] font-medium text-blue-400 uppercase tracking-widest mb-4">Live Behavioral State</h3>
+
             <!-- Behavioral State -->
-            <div class="space-y-4">
+            <div class="space-y-3 mb-5">
               <h4 class="text-[10px] font-semibold text-white/40 uppercase tracking-widest border-b border-white/5 pb-2">Behavioral State</h4>
-              <div class="space-y-2 text-xs">
+              <div class="space-y-1.5 text-xs">
                 <div class="flex justify-between"><span class="text-white/40">current_m</span><span id="dbg-current-m" class="text-white/90 font-mono font-semibold">--</span></div>
                 <div class="flex justify-between"><span class="text-white/40">weighted_avg</span><span id="dbg-weighted-avg" class="text-white/90 font-mono">--</span></div>
                 <div class="flex justify-between"><span class="text-white/40">tone_zone</span><span id="dbg-tone-zone" class="font-mono font-semibold">--</span></div>
@@ -346,9 +297,9 @@
             </div>
 
             <!-- Thought Signature -->
-            <div class="space-y-4">
+            <div class="space-y-3 mb-5">
               <h4 class="text-[10px] font-semibold text-purple-400/70 uppercase tracking-widest border-b border-white/5 pb-2">Thought Signature</h4>
-              <div class="space-y-2 text-xs">
+              <div class="space-y-1.5 text-xs">
                 <div class="flex justify-between"><span class="text-white/40">intent</span><span id="dbg-intent" class="text-white/90 font-mono">--</span></div>
                 <div class="flex justify-between"><span class="text-white/40">tone</span><span id="dbg-tone" class="text-white/90 font-mono">--</span></div>
                 <div class="flex justify-between"><span class="text-white/40">tactic</span><span id="dbg-tactic" class="text-white/90 font-mono">--</span></div>
@@ -359,9 +310,9 @@
             </div>
 
             <!-- Tier 4 Sovereign -->
-            <div class="space-y-4">
+            <div class="space-y-3 mb-5">
               <h4 class="text-[10px] font-semibold text-red-400/70 uppercase tracking-widest border-b border-white/5 pb-2">Tier 4 Sovereign</h4>
-              <div class="space-y-2 text-xs">
+              <div class="space-y-1.5 text-xs">
                 <div class="flex justify-between"><span class="text-white/40">trigger_key</span><span id="dbg-sovereign-key" class="text-white/90 text-[10px] truncate max-w-[120px] font-mono">--</span></div>
                 <div class="flex justify-between"><span class="text-white/40">gate_1</span><div class="flex items-center"><span id="dbg-gate-1" class="font-mono font-semibold">--</span><span id="dbg-gate-1-detail" class="text-white/40 text-[9px] ml-1"></span></div></div>
                 <div class="flex justify-between"><span class="text-white/40">gate_2</span><div class="flex items-center"><span id="dbg-gate-2" class="font-mono font-semibold">--</span><span id="dbg-gate-2-detail" class="text-white/40 text-[9px] ml-1"></span></div></div>
@@ -371,9 +322,44 @@
                 <div class="flex justify-between"><span class="text-white/40">response_src</span><span id="dbg-response-source" class="text-white/90 font-mono">--</span></div>
               </div>
             </div>
-
           </div>
-        </section>
+
+          <!-- Divider -->
+          <div class="border-t border-white/5"></div>
+
+          <!-- Residual Plot -->
+          <div>
+            <div class="text-[10px] text-white/40 uppercase mb-2">Residual Plot</div>
+            <canvas id="dbg-residual-canvas" width="240" height="50" class="w-full rounded border border-white/5 bg-black/20"></canvas>
+            <div class="flex justify-between mt-1"><span class="text-[9px] text-white/40">weighted_avg</span><span id="dbg-weighted-avg-plot" class="text-[9px] text-white/90 font-mono">--</span></div>
+          </div>
+
+          <!-- Tier Latencies -->
+          <div>
+            <div class="text-[10px] text-white/40 uppercase mb-2">Tier Latencies</div>
+            <div class="space-y-1" id="dbg-latencies">
+              <div class="text-white/30 text-[10px]">Waiting for first turn...</div>
+            </div>
+          </div>
+
+          <!-- Badges -->
+          <div class="flex flex-col gap-3 mt-auto shrink-0">
+            <div id="badge-cold-start" class="flex items-center justify-between px-4 py-3 rounded-xl bg-[#1A2030] border border-white/5 opacity-50 transition-all duration-300">
+              <div class="flex items-center gap-2">
+                <span class="text-yellow-500">❄</span>
+                <span class="text-xs text-gray-300 font-medium">Cold Start</span>
+              </div>
+              <div class="w-2 h-2 rounded-full bg-green-500"></div>
+            </div>
+            <div id="badge-troll-defense" class="flex items-center justify-between px-4 py-3 rounded-xl bg-[#1A2030] border border-white/5 opacity-50 transition-all duration-300">
+               <div class="flex items-center gap-2">
+                <span class="text-green-500">🛡</span>
+                <span class="text-xs text-gray-300 font-medium">Troll Defense Active</span>
+              </div>
+              <div class="w-2 h-2 rounded-full bg-green-500"></div>
+            </div>
+          </div>
+        </aside>
 
       </main>
 
@@ -400,7 +386,7 @@
       const BACKEND_HTTP = window.WILLOW_BACKEND_URL || '';
       const BACKEND_WS = BACKEND_HTTP
         ? BACKEND_HTTP.replace(/^http/, 'ws')
-        : `${location.protocol === 'https:' ? 'wss:' : 'ws:'}//localhost:8080`;
+        : `${location.protocol === 'https:' ? 'wss:' : 'ws:'}//${location.host}`;
 
       // --- Types & Constants ---
 
@@ -468,12 +454,25 @@
           
           mobileTurnCounter: document.getElementById('mobile-turn-counter'),
           mobileSessionTimer: document.getElementById('mobile-session-timer'),
+
+          // These may not exist in the current layout — all access is null-guarded
+          mModifierFill: document.getElementById('m-modifier-fill'),
+          mModifierHandle: document.getElementById('m-modifier-handle'),
+          mModifierMeter: document.getElementById('m-modifier-meter'),
+          t1Bar: document.getElementById('t1-bar'),
+          t1Val: document.getElementById('t1-val'),
+          t2Bar: document.getElementById('t2-bar'),
+          t2Val: document.getElementById('t2-val'),
+          t3Bar: document.getElementById('t3-bar'),
+          t3Val: document.getElementById('t3-val'),
+          t4Bar: document.getElementById('t4-bar'),
+          t4Val: document.getElementById('t4-val'),
+          tacticBadge: document.getElementById('tactic-badge'),
         };
 
         constructor() {
           this.#initEventListeners();
           this.#initResidualPlot();
-          this.#startMockSocket();
           this.#updateWsStatus('disconnected');
           this.#render();
         }
@@ -636,11 +635,7 @@
               break;
 
             case 'text_response':
-              if (msg.text) this.#addTranscriptEntry('willow', msg.text);
-              if (msg.m !== undefined) {
-                this.#state.mModifier = (msg.m + 10) / 20;
-                this.#render();
-              }
+              // Server doesn't currently send this — kept for forward compat
               break;
 
             case 'preflight_start':
@@ -656,11 +651,28 @@
               break;
 
             case 'session_snapshot':
-              this.#handleSessionSnapshot(msg.data || msg);
+              // Server sends via HTTP, not WS — kept for forward compat
               break;
 
             case 'error':
               this.#showToast(msg.message || 'Server error', 'error');
+              break;
+
+            // Server-sent messages
+            case 'session_ended':
+              this.#updateWsStatus('disconnected');
+              this.#stopAudio();
+              this.#showToast(msg.reason || 'Session ended', 'info');
+              this.#transitionTo('IDLE');
+              break;
+
+            case 'flush_audio_buffer':
+              this.#handleFlushAudioBuffer();
+              break;
+
+            case 'session_age_warning':
+              console.log('Session age warning:', msg.age_minutes, 'min');
+              this.#showToast(`Session active for ${msg.age_minutes}+ min`, 'info');
               break;
           }
         }
@@ -674,18 +686,22 @@
         }
 
         #updateWsStatus(status) {
-          const el = this.#elements.wsStatusText;
-          const dot = this.#elements.wsStatusDot;
-          if (!el || !dot) return;
           const cfg = {
             connected:    { text: 'Connected',    cls: 'text-green-400', dotCls: 'bg-green-500 shadow-[0_0_8px_rgba(34,197,94,0.6)]' },
             connecting:   { text: 'Connecting\u2026', cls: 'text-yellow-400', dotCls: 'bg-yellow-500 shadow-[0_0_8px_rgba(234,179,8,0.6)]' },
             disconnected: { text: 'Disconnected', cls: 'text-red-400',   dotCls: 'bg-red-500 shadow-[0_0_8px_rgba(239,68,68,0.6)]' },
           };
           const c = cfg[status] || cfg.disconnected;
-          el.textContent = c.text;
-          el.className = `text-sm font-medium ${c.cls}`;
-          dot.className = `w-2 h-2 rounded-full ${c.dotCls}`;
+          // Desktop
+          const el = this.#elements.wsStatusText;
+          const dot = this.#elements.wsStatusDot;
+          if (el) { el.textContent = c.text; el.className = `text-sm font-medium ${c.cls}`; }
+          if (dot) { dot.className = `w-2 h-2 rounded-full ${c.dotCls}`; }
+          // Mobile
+          const mEl = document.getElementById('ws-status-text-mobile');
+          const mDot = document.getElementById('ws-status-dot-mobile');
+          if (mEl) { mEl.textContent = c.text; mEl.className = `text-xs font-medium ${c.cls}`; }
+          if (mDot) { mDot.className = `w-2 h-2 rounded-full ${c.dotCls}`; }
         }
 
         // --- Audio Playback Queue (24kHz PCM from server) ---
@@ -773,7 +789,7 @@
           if (snapshot.cold_start_active !== undefined) this.#state.isColdStart = snapshot.cold_start_active;
           if (snapshot.troll_defense_active !== undefined) this.#state.isTrollDefense = snapshot.troll_defense_active;
           if (snapshot.tier_latencies) this.#state.latency = snapshot.tier_latencies;
-          if (snapshot.tactic) this.#state.tactic = snapshot.tactic;
+          this.#state.tactic = snapshot.tactic ?? snapshot.thought_signature?.detected_tactic ?? this.#state.tactic;
           if (snapshot.turn_count !== undefined) this.#state.turnCount = snapshot.turn_count;
           this.#render();
         }
@@ -793,6 +809,12 @@
           setDbg('dbg-cold-start', b.cold_start_active);
           setDbg('dbg-troll-defense', b.troll_defense_active);
           setDbg('dbg-spike-count', b.sovereign_spike_count);
+          setDbg('dbg-pitch-hz', b.pitch_hz?.toFixed(1) ?? '--');
+
+          // Troll Defense badge visibility
+          if (this.#elements.badgeTrollDefense) {
+            this.#elements.badgeTrollDefense.style.display = b.troll_defense_active ? 'flex' : 'none';
+          }
 
           // Tone zone with color
           const tzEl = document.getElementById('dbg-tone-zone');
@@ -1354,20 +1376,20 @@
           this.#elements.sessionStatusBadge.className = `px-3 py-1 rounded-full bg-white/5 border text-[10px] font-mono uppercase tracking-wider transition-colors duration-300 ${statusColors[this.#state.status] || statusColors['IDLE']}`;
           this.#elements.sessionStatusBadge.innerText = this.#state.status;
 
-          // M-Modifier Slider
+          // M-Modifier Slider (elements may not exist in current layout)
           const pct = this.#state.mModifier * 100;
-          this.#elements.mModifierFill.style.height = `${pct}%`;
-          this.#elements.mModifierHandle.style.bottom = `calc(${pct}% - 12px)`;
-          this.#elements.mModifierMeter.style.height = `${pct}%`;
-          
-          // Badges
-          this.#elements.badgeColdStart.style.opacity = this.#state.isColdStart ? '1' : '0.5';
-          this.#elements.badgeTrollDefense.style.opacity = this.#state.isTrollDefense ? '1' : '0.5';
+          if (this.#elements.mModifierFill) this.#elements.mModifierFill.style.height = `${pct}%`;
+          if (this.#elements.mModifierHandle) this.#elements.mModifierHandle.style.bottom = `calc(${pct}% - 12px)`;
+          if (this.#elements.mModifierMeter) this.#elements.mModifierMeter.style.height = `${pct}%`;
 
-          // Latency Bars
+          // Badges
+          if (this.#elements.badgeColdStart) this.#elements.badgeColdStart.style.opacity = this.#state.isColdStart ? '1' : '0.5';
+          if (this.#elements.badgeTrollDefense) this.#elements.badgeTrollDefense.style.display = this.#state.isTrollDefense ? 'flex' : 'none';
+
+          // Latency Bars (elements may not exist in current layout)
           const updateBar = (el, valEl, val, max) => {
-            el.style.width = `${Math.min(100, (val / max) * 100)}%`;
-            valEl.innerText = Math.round(val).toString();
+            if (el) el.style.width = `${Math.min(100, (val / max) * 100)}%`;
+            if (valEl) valEl.innerText = Math.round(val).toString();
           };
           updateBar(this.#elements.t1Bar, this.#elements.t1Val, this.#state.latency.t1, 50);
           updateBar(this.#elements.t2Bar, this.#elements.t2Val, this.#state.latency.t2, 100);
@@ -1375,7 +1397,7 @@
           updateBar(this.#elements.t4Bar, this.#elements.t4Val, this.#state.latency.t4, 500);
 
           // Tactic
-          this.#elements.tacticBadge.innerText = this.#state.tactic;
+          if (this.#elements.tacticBadge) this.#elements.tacticBadge.innerText = this.#state.tactic;
           
           // Turn Count
           const turnCountStr = this.#state.turnCount.toString();
@@ -1388,16 +1410,30 @@
       window.addEventListener('DOMContentLoaded', () => {
         new WillowEngine();
 
-        // Debug panel toggle
-        const debugPanel = document.getElementById('debug-overlay');
-        const debugToggle = document.getElementById('debug-toggle');
-        if (debugToggle && debugPanel) {
-          let debugHidden = false;
-          debugToggle.addEventListener('click', () => {
-            debugHidden = !debugHidden;
-            debugPanel.style.transform = debugHidden ? 'translateX(calc(100% + 16px))' : 'translateX(0)';
-            debugToggle.textContent = debugHidden ? 'SHOW' : 'HIDE';
-          });
+        // Mobile chart toggle — slide sidebar in/out from right
+        const chartToggle = document.getElementById('mobile-chart-toggle');
+        const sidebarPanel = document.getElementById('sidebar-panel');
+        const backdrop = document.getElementById('mobile-backdrop');
+        if (chartToggle && sidebarPanel) {
+          let sidebarOpen = false;
+          const toggleSidebar = () => {
+            sidebarOpen = !sidebarOpen;
+            if (sidebarOpen) {
+              sidebarPanel.classList.remove('translate-x-full');
+              sidebarPanel.classList.add('translate-x-0', 'flex');
+              chartToggle.classList.add('text-blue-400', 'border-blue-500/30');
+              chartToggle.classList.remove('text-white/70');
+              if (backdrop) { backdrop.classList.remove('opacity-0', 'pointer-events-none'); backdrop.classList.add('opacity-100'); }
+            } else {
+              sidebarPanel.classList.add('translate-x-full');
+              sidebarPanel.classList.remove('translate-x-0');
+              chartToggle.classList.remove('text-blue-400', 'border-blue-500/30');
+              chartToggle.classList.add('text-white/70');
+              if (backdrop) { backdrop.classList.add('opacity-0', 'pointer-events-none'); backdrop.classList.remove('opacity-100'); }
+            }
+          };
+          chartToggle.addEventListener('click', toggleSidebar);
+          if (backdrop) backdrop.addEventListener('click', () => { if (sidebarOpen) toggleSidebar(); });
         }
       });
     </script>

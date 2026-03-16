@@ -26,7 +26,7 @@ logging.basicConfig(
 
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
@@ -84,9 +84,15 @@ app.add_middleware(
 # ---------------------------------------------------------------------------
 
 @app.post("/api/v1/session")
-async def create_session():
+async def create_session(request: Request):
     """Create a new voice session and return connection details."""
     session_info = await agent.start_session()
+    # Override hardcoded production URL with the actual request host
+    host = request.headers.get("host", "localhost:8080")
+    # Cloud Run terminates TLS at LB — use X-Forwarded-Proto for real scheme
+    proto = request.headers.get("x-forwarded-proto", request.url.scheme)
+    scheme = "wss" if proto == "https" else "ws"
+    session_info["websocket_url"] = f"{scheme}://{host}/api/v1/session/{session_info['session_id']}/stream"
     return session_info
 
 
