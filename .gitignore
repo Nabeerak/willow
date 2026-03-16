@@ -70,3 +70,23 @@ dmypy.json
 # Scratch virtual environments
 test-venv/
 tmp-venv/
+
+# Test audio files
+data/tone_test_*.wav
+data/voice_test_*.wav
+
+# Runtime data
+data/sessions/
+
+# Internal dev tooling
+.agents/
+.cache/
+.claude/
+.specify/
+history/
+specs/
+skills-lock.json
+further.md
+
+# Claude Code
+CLAUDE.md
