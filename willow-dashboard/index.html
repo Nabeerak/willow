@@ -503,11 +503,10 @@
               await this.#connectWebSocket();
               this.#transitionTo('PREFLIGHT');
             } catch (e) {
-              console.warn('WebSocket unavailable, falling back to demo mode:', e.message);
-              this.#showToast('Backend unavailable — demo mode', 'info');
+              console.warn('WebSocket connection failed:', e.message);
+              this.#showToast('Server unavailable — start the backend first', 'error');
               this.#updateWsStatus('disconnected');
-              await new Promise(r => setTimeout(r, 1000));
-              this.#transitionTo('PREFLIGHT');
+              this.#transitionTo('IDLE');
             }
           }
           else if (newState === 'PREFLIGHT') {
