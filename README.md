@@ -1,8 +1,10 @@
-# <img src="Gemini_Generated_Image_jhw85ejhw85ejhw8.png" width="100" height="100" align="right" /> Willow
+# <img src="willow-dashboard/public/logo.png" width="100" height="100" align="right" /> Willow
 
 **Warm but Sharp.** An AI voice agent with a behavioral framework that adapts dynamically to conversational tone, detects psychological manipulation tactics, and enforces factual integrity with a deterministic Sovereign Truth layer.
 
 ## Architecture Overview
+
+![Willow Architecture](architecture.svg)
 
 ```
 User voice input
