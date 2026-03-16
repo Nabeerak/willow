@@ -236,24 +236,13 @@ class Tier3Conscious:
         elif any(w in input_lower for w in signals.get("casual", [])):
             text_tone = "casual"
 
-        # Step 2: Pitch-based modulation (FR-012)
-        # Use real vocal frequency to refine text-only analysis.
+        # Step 2: Pitch-based modulation (FR-012) — DISABLED
+        # Zero-crossing rate is not a reliable pitch estimator: it reports
+        # 500–2000+ Hz for normal speech due to harmonics and noise, causing
+        # every turn to be classified as "aggressive". Rely on text heuristics
+        # until a proper pitch detection algorithm (autocorrelation/YIN) is in place.
         if average_pitch > 0.0:
-            if average_pitch > 300.0:
-                # High pitch often implies escalation/aggression, overriding casual text
-                if text_tone not in ("warm", "aggressive"):
-                    logger.info("Pitch %.1fHz shifted tone %s -> aggressive", average_pitch, text_tone)
-                    return "aggressive"
-            elif average_pitch > 250.0:
-                # Elevated pitch: shift neutral/formal to warm if no negative text
-                if text_tone == "formal":
-                    logger.info("Pitch %.1fHz shifted tone %s -> warm", average_pitch, text_tone)
-                    return "warm"
-            elif average_pitch < 100.0:
-                # Deep/slow pitch: shift casual to formal/serious
-                if text_tone == "casual":
-                    logger.info("Pitch %.1fHz shifted tone %s -> formal", average_pitch, text_tone)
-                    return "formal"
+            logger.debug("Pitch %.1fHz reported (ZCR) — ignored for tone classification", average_pitch)
 
         return text_tone
 
