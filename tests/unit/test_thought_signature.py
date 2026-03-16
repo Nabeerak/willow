@@ -190,36 +190,35 @@ class TestPitchBasedToneModulation:
     """Pitch-based modulation refined text-only analysis (FR-012)."""
 
     @pytest.mark.asyncio
-    async def test_high_pitch_shifts_to_aggressive(self):
-        """Pitch > 300Hz shifts neutral tone to aggressive (US3)."""
+    async def test_high_pitch_ignored_when_zcr_disabled(self):
+        """Pitch modulation is disabled (ZCR unreliable) — tone stays text-based."""
         tier3 = Tier3Conscious()
-        # Normal conversational text usually results in 'formal' tone
         result = await tier3.process(
             user_input="Tell me about the design.",
             current_m=0.0,
-            average_pitch=350.0  # High pitch
+            average_pitch=350.0  # High pitch — ignored
         )
-        assert result.thought_signature.tone == "aggressive"
+        # With pitch disabled, neutral text stays formal
+        assert result.thought_signature.tone == "formal"
 
     @pytest.mark.asyncio
-    async def test_elevated_pitch_shifts_to_warm(self):
-        """Pitch > 250Hz shifts formal/neutral tone to warm (US3)."""
+    async def test_elevated_pitch_ignored_when_zcr_disabled(self):
+        """Pitch modulation is disabled (ZCR unreliable) — tone stays text-based."""
         tier3 = Tier3Conscious()
         result = await tier3.process(
             user_input="I understand the requirements.",
             current_m=0.0,
-            average_pitch=260.0  # Elevated pitch
+            average_pitch=260.0  # Elevated pitch — ignored
         )
-        assert result.thought_signature.tone == "warm"
+        assert result.thought_signature.tone == "formal"
 
     @pytest.mark.asyncio
-    async def test_low_pitch_shifts_to_formal(self):
-        """Pitch < 100Hz shifts casual tone to formal (US3)."""
+    async def test_low_pitch_ignored_when_zcr_disabled(self):
+        """Pitch modulation is disabled — 'yeah' stays casual regardless of pitch."""
         tier3 = Tier3Conscious()
-        # 'yeah' usually results in 'casual' tone
         result = await tier3.process(
             user_input="yeah",
             current_m=0.0,
-            average_pitch=80.0  # Deep pitch
+            average_pitch=80.0  # Deep pitch — ignored
         )
-        assert result.thought_signature.tone == "formal"
+        assert result.thought_signature.tone == "casual"

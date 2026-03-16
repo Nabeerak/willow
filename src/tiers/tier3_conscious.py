@@ -227,7 +227,7 @@ class Tier3Conscious:
         text_tone: ToneType = "formal"
         if any(w in input_lower for w in signals.get("aggressive", [])):
             text_tone = "aggressive"
-        elif re.search(r"[?!]{2,}", user_input) or re.search(r"[A-Z]{4,}", user_input):
+        elif re.search(r"[?!]{2,}", user_input) or _is_shouting(user_input):
             text_tone = "aggressive"
         elif any(w in input_lower for w in signals.get("sarcastic", [])):
             text_tone = "sarcastic"
@@ -456,4 +456,19 @@ class Tier3Conscious:
 # Module-level re for _classify_tone (avoids import cycle)
 # ---------------------------------------------------------------------------
 import re  # noqa: E402 — intentional late import for clarity
+
+# Common words that STT capitalizes — not evidence of shouting
+_CAPS_STOPWORDS: set[str] = {
+    'TELL', 'MORE', 'ABOUT', 'THIS', 'WHAT',
+    'THAT', 'HELLO', 'HAVE', 'YOUR', 'WILL',
+    'JUST', 'BEEN', 'FROM', 'WITH', 'THEY',
+    'WERE', 'THEN', 'THAN', 'WHEN', 'ALSO',
+}
+
+
+def _is_shouting(text: str) -> bool:
+    """Return True if text contains 2+ all-caps words that aren't STT stopwords."""
+    caps_words = re.findall(r'\b[A-Z]{4,}\b', text)
+    aggressive_caps = [w for w in caps_words if w not in _CAPS_STOPWORDS]
+    return len(aggressive_caps) >= 2
 

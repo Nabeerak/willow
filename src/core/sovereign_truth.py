@@ -312,7 +312,10 @@ _INTERROGATIVE_STARTERS = frozenset([
 _PUNCTUATION_STRIP = str.maketrans("", "", string.punctuation)
 
 # Simple suffix rules for lightweight normalization (MVP — no NLTK dep)
+# Order matters: handle irregular contractions before the generic n't rule.
 _SUFFIX_RULES: List[Tuple[str, str]] = [
+    ("won't", "will not"),
+    ("can't", "cannot"),
     ("n't", " not"),
     ("'re", " are"),
     ("'ve", " have"),

@@ -901,41 +901,72 @@
           const w = canvas.width, h = canvas.height;
           ctx.clearRect(0, 0, w, h);
 
-          if (!values.length) return;
+          if (!values || values.length === 0) return;
 
-          // Draw zero line
+          // Draw zero line (axis)
           const centerY = h / 2;
-          ctx.strokeStyle = 'rgba(255,255,255,0.08)';
-          ctx.lineWidth = 1;
+          ctx.strokeStyle = 'rgba(255,255,255,0.1)';
+          ctx.setLineDash([2, 2]);
           ctx.beginPath();
           ctx.moveTo(0, centerY);
           ctx.lineTo(w, centerY);
           ctx.stroke();
+          ctx.setLineDash([]);
 
-          // Plot values (-2 to +2 range)
-          const min = -2, max = 2;
-          const step = w / Math.max(values.length - 1, 1);
+          // Plot configuration
+          const min = -2.0, max = 2.0;
+          const margin = 20;
+          const usableWidth = w - (margin * 2);
+          const step = values.length > 1 ? usableWidth / (values.length - 1) : 0;
+          
+          // Values from backend are [newest, t-1, t-2, ...]. 
+          // Reverse them so time flows left-to-right: [oldest, ..., newest]
+          const displayValues = [...values].reverse();
+          
+          const getX = (i) => margin + (i * step);
+          const getY = (v) => centerY - ((v / max) * (h / 2.5));
 
-          const lineColor = weightedAvg < -0.5 ? '#60a5fa' : weightedAvg > 0.5 ? '#f59e0b' : '#94a3b8';
-          ctx.strokeStyle = lineColor;
-          ctx.lineWidth = 2;
-          ctx.beginPath();
-
-          values.forEach((v, i) => {
-            const x = i * step;
-            const y = h - ((v - min) / (max - min)) * h;
-            i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
-          });
-          ctx.stroke();
-
-          // Draw dots
-          ctx.fillStyle = lineColor;
-          values.forEach((v, i) => {
-            const x = i * step;
-            const y = h - ((v - min) / (max - min)) * h;
+          // 1. Draw Stems (Sticks from axis to point)
+          displayValues.forEach((v, i) => {
+            const x = getX(i);
+            const y = getY(v);
+            const color = v < -0.5 ? '#60a5fa' : v > 0.5 ? '#f59e0b' : '#94a3b8';
+            ctx.strokeStyle = color + '44';
+            ctx.lineWidth = 1;
             ctx.beginPath();
-            ctx.arc(x, y, 3, 0, Math.PI * 2);
+            ctx.moveTo(x, centerY);
+            ctx.lineTo(x, y);
+            ctx.stroke();
+          });
+
+          // 2. Draw Connection Line
+          if (displayValues.length > 1) {
+            ctx.beginPath();
+            ctx.strokeStyle = weightedAvg < -0.5 ? '#60a5fa' : weightedAvg > 0.5 ? '#f59e0b' : '#94a3b8';
+            ctx.lineWidth = 2;
+            displayValues.forEach((v, i) => {
+              const x = getX(i);
+              const y = getY(v);
+              i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+            });
+            ctx.stroke();
+          }
+
+          // 3. Draw Points
+          displayValues.forEach((v, i) => {
+            const x = getX(i);
+            const y = getY(v);
+            const isNewest = i === displayValues.length - 1;
+            const color = v < -0.5 ? '#60a5fa' : v > 0.5 ? '#f59e0b' : '#94a3b8';
+            ctx.fillStyle = color;
+            ctx.beginPath();
+            ctx.arc(x, y, isNewest ? 4 : 3, 0, Math.PI * 2);
             ctx.fill();
+            if (isNewest) {
+              ctx.strokeStyle = '#fff';
+              ctx.lineWidth = 1;
+              ctx.stroke();
+            }
           });
         }
 
