@@ -2,6 +2,8 @@
 
 **Warm but Sharp.** An AI voice agent with a behavioral framework that adapts dynamically to conversational tone, detects psychological manipulation tactics, and enforces factual integrity with a deterministic Sovereign Truth layer.
 
+Built for the **2026 Gemini Live Agent Challenge**.
+
 ## Architecture Overview
 
 ![Willow Architecture](architecture.svg)
@@ -12,7 +14,7 @@ User voice input
         ▼
 ┌──────────────────────────────────┐
 │  Audio Capture (Browser)         │  Noise gate, adaptive buffer, preflight warmup
-│  noise-gate-processor.js         │  spec 002: T024, T026, T027, T028
+│  noise-gate-processor.js         │
 │  audio_capture.js                │
 └──────────────┬───────────────────┘
                │ WebSocket (binary audio + JSON control)
@@ -27,36 +29,70 @@ User voice input
 └──────────────────────────────────┘
 ```
 
-## Quick Start
+## Prerequisites
+
+- Python 3.12+
+- A [Gemini API key](https://aistudio.google.com/apikey) with access to `gemini-2.5-flash-native-audio-preview-12-2025`
+- Google Cloud SDK (for deployment only)
+
+## Quick Start (Local)
 
 ```bash
-# 1. Clone and install
+# 1. Clone the repo
+git clone https://github.com/nabeerasool/willow.git
+cd willow
+
+# 2. Create and activate virtual environment
+python3 -m venv .venv
+source .venv/bin/activate
+
+# 3. Install dependencies
 pip install -r requirements.txt
 
-# 2. Configure
+# 4. Configure environment
 cp .env.example .env
-# Add your GEMINI_API_KEY to .env
+# Edit .env and add your GEMINI_API_KEY
 
-# 3. Generate filler audio clips
+# 5. Generate filler audio clips
 python3 scripts/generate_filler_audio.py
 
-# 4. Run tests
+# 6. Run the server
+uvicorn src.server:app --host 0.0.0.0 --port 8080 --reload
+
+# 7. Open the dashboard
+# Visit http://localhost:8080 in your browser
+```
+
+## Running Tests
+
+```bash
+# Unit + integration tests
 python3 -m pytest tests/ -q
 
-# 5. Validate success criteria
+# Validate success criteria
 python3 scripts/validate_success_criteria.py
 ```
 
 ## Google Cloud Deployment
 
+### One-command deploy
+
 ```bash
-# Set your project
+chmod +x deploy.sh
+./deploy.sh
+```
+
+### Manual deploy
+
+```bash
+# 1. Authenticate
+gcloud auth login
 gcloud config set project YOUR_PROJECT_ID
 
-# Enable required services
-gcloud services enable run.googleapis.com
+# 2. Enable required services
+gcloud services enable run.googleapis.com artifactregistry.googleapis.com cloudbuild.googleapis.com
 
-# Deploy
+# 3. Deploy to Cloud Run
 gcloud run deploy willow \
   --source . \
   --region us-central1 \
@@ -64,27 +100,25 @@ gcloud run deploy willow \
   --port 8080 \
   --memory 1Gi \
   --timeout 3600 \
-  --set-env-vars GOOGLE_API_KEY=your_key_here \
-  --set-env-vars GEMINI_MODEL_ID=gemini-2.5-flash-native-audio-preview-12-2025
+  --set-env-vars GEMINI_API_KEY=your_key_here \
+  --set-env-vars GEMINI_MODEL_ID=gemini-2.5-flash-native-audio-preview-12-2025 \
+  --set-env-vars SKIP_HASH_VALIDATION=true
+
+# 4. Get the live URL
+gcloud run services describe willow --region us-central1 --format="value(status.url)"
 ```
 
-Required environment variables:
+### Environment Variables
 
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
-| `GEMINI_API_KEY` | **yes** | — | Gemini API key (SDK prefers this over `GOOGLE_API_KEY`) |
+| `GEMINI_API_KEY` | **yes** | — | Gemini API key |
 | `GEMINI_MODEL_ID` | no | `gemini-2.5-flash-native-audio-preview-12-2025` | Must support `bidiGenerateContent` (Gemini Live) |
-| `GEMINI_VOICE_NAME` | no | `Aoede` | Voice name — options: Aoede, Charon, Fenrir, Kore, Puck |
-| `SESSION_TIMEOUT_SECONDS` | no | `3600` | Max session duration in seconds |
-| `MIN_FILLER_LATENCY_MS` | no | `200` | Threshold (ms) before filler audio plays to mask latency |
-| `GCP_PROJECT_ID` | no | `willow-agent` | Google Cloud project ID |
-| `SKIP_HASH_VALIDATION` | no | `true` | Set `true` in local dev to skip Secret Manager hash check |
-| `ENABLE_CLOUD_LOGGING` | no | `false` | Enable Google Cloud structured logging |
-| `LOG_LEVEL` | no | `INFO` | Python log level (DEBUG, INFO, WARNING, ERROR) |
-| `TIER1_BUDGET_MS` | no | `50` | Latency budget for Tier 1 Reflex (ms) |
-| `TIER2_BUDGET_MS` | no | `5` | Latency budget for Tier 2 Metabolism (ms) |
-| `TIER3_BUDGET_MS` | no | `500` | Latency budget for Tier 3 Conscious (ms) |
-| `TIER4_BUDGET_MS` | no | `2000` | Latency budget for Tier 4 Sovereign (ms) |
+| `GEMINI_VOICE_NAME` | no | `Aoede` | Voice name — Aoede, Charon, Fenrir, Kore, Puck |
+| `SESSION_TIMEOUT_SECONDS` | no | `3600` | Max session duration (seconds) |
+| `MIN_FILLER_LATENCY_MS` | no | `200` | Threshold (ms) before filler audio plays |
+| `SKIP_HASH_VALIDATION` | no | `true` | Skip Secret Manager hash check in local dev |
+| `LOG_LEVEL` | no | `INFO` | Python log level |
 
 ## Key Concepts
 
@@ -96,40 +130,6 @@ Required environment variables:
 | **Troll Defense** | After 3 consecutive Sovereign Spikes, returns boundary statement. |
 | **Grace Boost** | Sincere Pivot after hostile exchange: +2.0 m recovery. |
 | **Filler Audio** | "Hmm…", "Aah…" played when Tier 3/4 exceeds 200ms to mask latency. |
-
-## Project Structure
-
-```
-src/
-├── core/           # State management, ResidualPlot, SovereignTruthCache
-├── tiers/          # Tier 1-4 implementations
-├── signatures/     # ThoughtSignature, TacticDetector, parser
-├── persona/        # Warm but Sharp voice calibration
-├── voice/          # Gemini Live, interruption handler, filler audio
-│   └── static/     # AudioWorklet: noise-gate-processor.js, audio_capture.js
-├── config.py       # Environment configuration
-└── main.py         # WillowAgent orchestration
-
-tests/
-├── cohort/         # Calibration Cohort persona tests
-├── integration/    # End-to-end voice flow tests
-└── unit/           # Unit tests per module
-
-data/
-├── sovereign_truths.json   # Curated factual assertions
-└── filler_audio/           # Pre-generated WAV filler clips
-
-scripts/
-├── verify_residual_plot.py
-├── verify_state_formula.py
-├── benchmark_tiers.py
-├── test_filler_audio.py
-└── validate_success_criteria.py
-
-specs/
-├── 001-willow-behavioral-framework/   # Core behavioral spec, plan, tasks
-└── 002-gemini-audio-opt/              # Audio optimisation spec, plan, tasks
-```
 
 ## Behavioral State Formula
 
@@ -152,10 +152,41 @@ Intent → m mapping:
 | devaluing | -(d + 5.0) | Sovereign Spike |
 | sincere_pivot | +2.0 | Grace Boost |
 
-## Spec References
+## Project Structure
 
-- `specs/001-willow-behavioral-framework/` — Core behavioral framework
-- `specs/002-gemini-audio-opt/` — Audio optimisation (noise gate, adaptive buffer)
-- `docs/architecture.md` — Detailed architecture
-- `docs/api-contracts.md` — WebSocket and REST contracts
-- `docs/calibration-cohort-guide.md` — Testing persona calibration
+```
+src/
+├── core/           # State management, ResidualPlot, SovereignTruthCache
+├── tiers/          # Tier 1-4 implementations
+├── signatures/     # ThoughtSignature, TacticDetector, parser
+├── persona/        # Warm but Sharp voice calibration
+├── voice/          # Gemini Live, interruption handler, filler audio
+├── config.py       # Environment configuration
+├── main.py         # WillowAgent orchestration
+└── server.py       # FastAPI server + WebSocket endpoint
+
+willow-dashboard/
+├── index.html      # Single-page dashboard (Tailwind CSS)
+└── public/         # Static assets (logo, architecture diagram)
+
+data/
+├── sovereign_truths.json   # Curated factual assertions
+└── filler_audio/           # Pre-generated WAV filler clips
+
+tests/
+├── cohort/         # Calibration Cohort persona tests
+├── integration/    # End-to-end voice flow tests
+└── unit/           # Unit tests per module
+```
+
+## Technologies
+
+- **Core AI:** Gemini 2.0 Flash (Experimental), Google GenAI SDK, Text-Embedding-004
+- **Backend:** Python 3.12, FastAPI, Uvicorn, Docker
+- **Infrastructure:** Google Cloud Run
+- **Frontend:** Vanilla JS, Web Audio API (AudioWorklets for noise gating), Tailwind CSS
+- **Voice IDs:** Aoede (low-m), Leda (neutral), Zephyr (high-m)
+
+## License
+
+Built by [Nabeera](https://github.com/nabeerasool) for the 2026 Gemini Live Agent Challenge.
