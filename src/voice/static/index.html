@@ -138,7 +138,7 @@
 // ── State ────────────────────────────────────────────────────────────────────
 let sessionId = null, ws = null, mode = 'text';
 let micActive = false, audioCtx = null, mediaStream = null, processor = null;
-let playCtx = null;
+let playCtx = null, masterGain = null, activeVoice = 'Leda';
 const audioQueue = [], playLog = document.getElementById('log');
 
 // ── Boot ─────────────────────────────────────────────────────────────────────
@@ -257,7 +257,13 @@ function playPCM(bytes) {
 async function drain() {
   if (!audioQueue.length) { playing = false; return; }
   playing = true;
-  if (!playCtx) playCtx = new AudioContext({ sampleRate: 24000 });
+  if (!playCtx) {
+    playCtx = new AudioContext({ sampleRate: 24000 });
+    masterGain = playCtx.createGain();
+    masterGain.connect(playCtx.destination);
+  }
+  // Leda is mastered louder than Zephyr/Aoede — apply 40% gain reduction.
+  masterGain.gain.value = activeVoice === 'Leda' ? 0.6 : 1.0;
   const bytes = audioQueue.shift();
   const i16 = new Int16Array(bytes.buffer, bytes.byteOffset, bytes.byteLength >> 1);
   const f32 = new Float32Array(i16.length);
@@ -266,7 +272,7 @@ async function drain() {
   buf.getChannelData(0).set(f32);
   const src = playCtx.createBufferSource();
   src.buffer = buf;
-  src.connect(playCtx.destination);
+  src.connect(masterGain);
   src.onended = drain;
   src.start();
 }
@@ -311,6 +317,8 @@ async function refreshState() {
     const t = document.getElementById('trollVal');
     t.textContent = s.troll_defense_active ? 'ACTIVE' : 'Off';
     t.className = 'val ' + (s.troll_defense_active ? 'neg' : '');
+    // Derive active voice from m-value — mirrors ZONE_VOICE_MAP in gemini_live.py.
+    activeVoice = s.current_m > 0.5 ? 'Zephyr' : s.current_m < -0.5 ? 'Aoede' : 'Leda';
   } catch (_) {}
 }
 </script>

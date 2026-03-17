@@ -28,7 +28,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Any, Optional, Union
 
-from .config import WillowConfig, get_config
+from .config import WillowConfig, get_config, get_filler_audio_dir
 from .persona.warm_sharp import get_troll_defense_response, get_m_range, get_response_style
 from .voice.filler_audio import FillerAudioPlayer, FILLER_LATENCY_THRESHOLD_MS
 from .tiers.tier_trigger import TierTrigger, log_tier_trigger
@@ -260,6 +260,22 @@ def _load_intent_keywords() -> dict[str, list[str]]:
             "hostile": ["hate", "terrible", "awful", "stupid", "shut up"]
         }
 
+_HIGH_M_THRESHOLD: float = 0.5  # mirrors Tier1Reflex.M_HIGH_THRESHOLD
+
+
+@lru_cache(maxsize=1)
+def _load_tactic_keywords() -> dict[str, list[str]]:
+    """Load tactic keyword lists from willow_keywords.json (tactics section)."""
+    keywords_path = Path(__file__).parent.parent / "data" / "willow_keywords.json"
+    try:
+        with open(keywords_path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        return data.get("tactics", {})
+    except (FileNotFoundError, json.JSONDecodeError) as e:
+        logger.warning(f"Failed to load tactics from willow_keywords.json: {e}")
+        return {}
+
+
 def _load_tier3_trigger_patterns() -> list[str]:
     """Load Tier 3 force-trigger patterns from willow_keywords.json."""
     keywords_path = Path(__file__).parent.parent / "data" / "willow_keywords.json"
@@ -379,7 +395,7 @@ class WillowAgent:
         self._interruption_handler = InterruptionHandler()
 
         # Filler audio player (US5 — pre-loaded at startup)
-        self._filler_player = FillerAudioPlayer()
+        self._filler_player = FillerAudioPlayer(data_dir=get_filler_audio_dir())
         self._filler_player.load()
 
         # Background task tracking (T038)
@@ -1334,18 +1350,32 @@ class WillowAgent:
         # >FILLER_LATENCY_THRESHOLD_MS (200ms) to complete. This is independent
         # of Gemini text generation: filler plays while the tier runs, Gemini
         # receives the behavioral context only after the tier completes.
+        # Evaluate additional filler conditions before clip selection.
+        sincere_pivot_detected = self._fast_sincere_pivot(user_input)
+        entering_high_m = (
+            current_state.current_m <= _HIGH_M_THRESHOLD
+            and new_state.current_m > _HIGH_M_THRESHOLD
+        )
+        warm_tone = reflex_result.applied_tone == "warm"
+
         filler_audio_path = None
         _filler_start_ms = time.perf_counter() * 1000
-        if requires_tier3 or requires_tier4:
-            filler_audio_path = self._select_filler_audio(requires_tier3, requires_tier4)
+        if requires_tier3 or requires_tier4 or sincere_pivot_detected or entering_high_m or warm_tone:
+            filler_audio_path = self._select_filler_audio(
+                requires_tier3,
+                requires_tier4,
+                sincere_pivot_detected=sincere_pivot_detected,
+                entering_high_m=entering_high_m,
+                warm_tone=warm_tone,
+            )
             if filler_audio_path:
                 clip_name = filler_audio_path.split("/")[-1].replace(".wav", "")
                 self._interruption_handler.start_agent_speaking()
                 await self._filler_player.play(clip_name)
                 logger.debug(
-                    "Filler triggered: clip=%s tier3=%s tier4=%s threshold=%.0fms",
+                    "Filler triggered: clip=%s tier3=%s tier4=%s sincere_pivot=%s high_m_entry=%s warm_tone=%s",
                     clip_name, requires_tier3, requires_tier4,
-                    FILLER_LATENCY_THRESHOLD_MS,
+                    sincere_pivot_detected, entering_high_m, warm_tone,
                 )
 
         # Now schedule background tier tasks
@@ -1795,17 +1825,54 @@ class WillowAgent:
 
         return full_response
 
+    def _fast_sincere_pivot(self, user_input: str) -> bool:
+        """
+        Lightweight keyword scan for sincere_pivot — runs inline before filler fires.
+
+        Uses the same tactics keyword list as TacticDetector but without the
+        async overhead. Intentionally low-precision: false positives play cool_but,
+        which is unobtrusive. Tier 3's full TacticDetector remains the authoritative
+        classifier for grace boost / state updates.
+        """
+        phrases = _load_tactic_keywords().get("sincere_pivot", [])
+        if not phrases:
+            return False
+        input_lower = user_input.lower()
+        return any(p.lower() in input_lower for p in phrases)
+
     def _select_filler_audio(
         self,
         requires_tier3: bool,
-        requires_tier4: bool
+        requires_tier4: bool,
+        sincere_pivot_detected: bool = False,
+        entering_high_m: bool = False,
+        warm_tone: bool = False,
     ) -> Optional[str]:
-        """Select appropriate filler audio based on tier triggers."""
+        """
+        Select appropriate filler audio clip via TRIGGER_FILLER_MAP.
+
+        Priority order:
+          1. Tier 4 (truth_conflict)  → aah
+          2. sincere_pivot            → cool_but
+          3. high_m zone entry        → interesting
+          4. Tier 1 warm tone         → right_so
+          5. Tier 3 (default)         → hmm
+        """
         if requires_tier4:
-            return "data/filler_audio/aah.wav"
+            trigger = "truth_conflict"
+        elif sincere_pivot_detected:
+            trigger = "sincere_pivot"
+        elif entering_high_m:
+            trigger = "high_m_entry"
+        elif warm_tone:
+            trigger = "warm_tone"
         elif requires_tier3:
-            return "data/filler_audio/hmm.wav"
-        return None
+            trigger = "manipulation_pattern"
+        else:
+            return None
+
+        clip = self._filler_player.clip_for_trigger(trigger)
+        return f"data/filler_audio/{clip}.wav"
 
     def _create_turn_record(
         self,

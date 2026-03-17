@@ -47,14 +47,33 @@ VALID_TACTICS = frozenset({
     "gaslighting",          # Attempting to make agent doubt its knowledge
     "deflection",           # Avoiding the topic or redirecting
     "contextual_sarcasm",   # Sarcasm that depends on conversation context
+    "contextual_sarcasm_malice",
+    "high_status_pressure",
+    "love_bombing",
+    "false_consensus",
+    "victimhood_play",
+    "leading_question",
+    "trivializing",
+    "exhaustion_loop",
     "sincere_pivot",        # T041/US4: Genuine apology or acknowledgment (not manipulation)
+    "casual_invite",
+    "frame_flip_tool",
+    "genuine_question_about_nature",
+    "someone_struggling",
+    "someone_sharp",
     None,                   # No tactic detected
 })
 
 # Type aliases for clarity
 IntentType = Literal["collaborative", "neutral", "hostile", "devaluing", "insightful", "sincere_pivot"]
 ToneType = Literal["warm", "casual", "formal", "sarcastic", "aggressive"]
-TacticType = Literal["soothing", "mirroring", "gaslighting", "deflection", "contextual_sarcasm", "sincere_pivot"] | None
+TacticType = Literal[
+    "soothing", "mirroring", "gaslighting", "deflection", "contextual_sarcasm",
+    "contextual_sarcasm_malice", "high_status_pressure", "love_bombing", "false_consensus",
+    "victimhood_play", "leading_question", "trivializing", "exhaustion_loop",
+    "sincere_pivot", "casual_invite", "frame_flip_tool", "genuine_question_about_nature",
+    "someone_struggling", "someone_sharp"
+] | None
 
 
 class ThoughtSignatureValidationError(ValueError):

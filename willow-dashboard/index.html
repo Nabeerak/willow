@@ -315,7 +315,7 @@
               <div class="space-y-1.5 text-xs">
                 <div class="flex justify-between"><span class="text-white/40">intent</span><span id="dbg-intent" class="text-white/90 font-mono">--</span></div>
                 <div class="flex justify-between"><span class="text-white/40">tone</span><span id="dbg-tone" class="text-white/90 font-mono">--</span></div>
-                <div class="flex justify-between"><span class="text-white/40">tactic</span><span id="dbg-tactic" class="text-white/90 font-mono">--</span></div>
+                <div class="flex justify-between gap-2"><span class="text-white/40 shrink-0">tactic</span><span id="dbg-tactic" class="text-white/90 font-mono text-right text-[10px] truncate max-w-[140px]">--</span></div>
                 <div class="flex justify-between"><span class="text-white/40">m_modifier</span><span id="dbg-m-modifier" class="text-white/90 font-mono">--</span></div>
                 <div class="flex justify-between"><span class="text-white/40">tier_fired</span><span id="dbg-tier-fired" class="text-white/90 font-mono">--</span></div>
                 <div class="flex justify-between gap-2"><span class="text-white/40 shrink-0">rationale</span><span id="dbg-rationale" class="text-white/60 text-right text-[10px] truncate max-w-[140px]">--</span></div>
@@ -739,7 +739,10 @@
             const raw = this.#audioQueue.shift();
             const pcm16 = new Int16Array(raw);
             const f32 = new Float32Array(pcm16.length);
-            for (let i = 0; i < pcm16.length; i++) f32[i] = pcm16[i] / 32768;
+            
+            // Leda (neutral_m) is natively louder, so we apply a 0.6x gain reduction
+            const gain = (this.#state.toneZone === 'neutral_m' || !this.#state.toneZone) ? 0.6 : 1.0;
+            for (let i = 0; i < pcm16.length; i++) f32[i] = (pcm16[i] / 32768) * gain;
 
             const buf = ctx.createBuffer(1, f32.length, 24000);
             buf.copyToChannel(f32, 0);
@@ -816,10 +819,13 @@
 
           // Tone zone with color
           const tzEl = document.getElementById('dbg-tone-zone');
-          if (tzEl && b.tone_zone) {
-            tzEl.textContent = b.tone_zone.replace('_m', '').toUpperCase();
-            const tzColors = { high_m: 'text-amber-400', neutral_m: 'text-gray-300', low_m: 'text-blue-400' };
-            tzEl.className = `font-semibold ${tzColors[b.tone_zone] || 'text-white/90'}`;
+          if (b.tone_zone) {
+            this.#state.toneZone = b.tone_zone;
+            if (tzEl) {
+              tzEl.textContent = b.tone_zone.replace('_m', '').toUpperCase();
+              const tzColors = { high_m: 'text-amber-400', neutral_m: 'text-gray-300', low_m: 'text-blue-400' };
+              tzEl.className = `font-semibold ${tzColors[b.tone_zone] || 'text-white/90'}`;
+            }
           }
 
           // Thought Signature

@@ -37,6 +37,9 @@ TRIGGER_FILLER_MAP: Final[dict[str, str]] = {
     "manipulation_pattern": "hmm",    # Tier 3 — reflective pause
     "truth_conflict": "aah",          # Tier 4 — considered pause
     "emotional_spike": "right_so",    # High-energy deflection
+    "sincere_pivot": "cool_but",      # Genuine reset / apology — warmth shift
+    "high_m_entry": "interesting",    # m crosses into high zone — engagement lift
+    "warm_tone": "right_so",          # Tier 1 warm tone detected
 }
 
 # Latency threshold after which filler is queued (ms)
