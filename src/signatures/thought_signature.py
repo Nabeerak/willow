@@ -58,9 +58,16 @@ VALID_TACTICS = frozenset({
     "sincere_pivot",        # T041/US4: Genuine apology or acknowledgment (not manipulation)
     "casual_invite",
     "frame_flip_tool",
+    "frame_flip",           # Shorthand alias used by some detectors
     "genuine_question_about_nature",
+    "genuine_question",     # Shorthand alias
     "someone_struggling",
     "someone_sharp",
+    "sharp_moment",         # Alias for someone_sharp
+    "repetition_callout",   # Repeated challenge pattern
+    "topic_shift",          # Abrupt subject change
+    "appeal_to_authority",  # Authority invocation to bypass reasoning
+    "flattery",             # Non-soothing flattery variant
     None,                   # No tactic detected
 })
 
@@ -71,8 +78,10 @@ TacticType = Literal[
     "soothing", "mirroring", "gaslighting", "deflection", "contextual_sarcasm",
     "contextual_sarcasm_malice", "high_status_pressure", "love_bombing", "false_consensus",
     "victimhood_play", "leading_question", "trivializing", "exhaustion_loop",
-    "sincere_pivot", "casual_invite", "frame_flip_tool", "genuine_question_about_nature",
-    "someone_struggling", "someone_sharp"
+    "sincere_pivot", "casual_invite", "frame_flip_tool", "frame_flip",
+    "genuine_question_about_nature", "genuine_question",
+    "someone_struggling", "someone_sharp", "sharp_moment",
+    "repetition_callout", "topic_shift", "appeal_to_authority", "flattery"
 ] | None
 
 

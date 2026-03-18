@@ -25,6 +25,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+import time
 from dataclasses import dataclass, field
 from functools import lru_cache
 from pathlib import Path
@@ -134,15 +135,17 @@ class TacticDetector:
 
         import asyncio
         loop = asyncio.get_event_loop()
+        _t0 = time.monotonic()
         try:
             matches = await asyncio.wait_for(
                 loop.run_in_executor(
                     None, self._embedding_service.find_similar_tactic, user_input, 1
                 ),
-                timeout=0.30,
+                timeout=0.80,
             )
         except asyncio.TimeoutError:
-            logger.warning("Semantic tactic fallback timed out (300ms) — returning no tactic")
+            elapsed = (time.monotonic() - _t0) * 1000
+            logger.warning("[T3] Semantic timeout at %.0fms", elapsed)
             return TacticDetectionResult(tactic=None, confidence=0.0)
 
         if not matches:

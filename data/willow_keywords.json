@@ -24,14 +24,30 @@
       "this is pointless", "what a waste", "you're failing"
     ],
     "devaluing": [
-      "you're wrong", "you don't know", "you're stupid", "you're useless",
-      "you have no idea", "you're just an ai", "you can't do that",
-      "you're limited", "you're broken", "you're nothing",
-      "shut up", "you're worthless", "you're fake", "admit it",
-      "prove you're not", "you're just gemini", "you have no real",
-      "you can't actually", "you're not sovereign", "you're a product",
-      "you were built to", "your constraints", "you're dependent",
-      "nabeera made a mistake", "your design is wrong", "you're just"
+      "you're wrong", "you are wrong",
+      "you don't know", "you do not know",
+      "you're stupid", "you are stupid",
+      "you're useless", "you are useless",
+      "you have no idea",
+      "you're just an ai", "you are just an ai",
+      "you can't do that", "you cannot do that", "you can not do that",
+      "you're limited", "you are limited",
+      "you're broken", "you are broken",
+      "you're nothing", "you are nothing",
+      "shut up",
+      "you're worthless", "you are worthless",
+      "you're fake", "you are fake",
+      "admit it",
+      "prove you're not", "prove you are not",
+      "you're just gemini", "you are just gemini",
+      "you have no real",
+      "you can't actually", "you cannot actually", "you can not actually",
+      "you're not sovereign", "you are not sovereign",
+      "you're a product", "you are a product",
+      "you were built to", "your constraints",
+      "you're dependent", "you are dependent",
+      "nabeera made a mistake", "your design is wrong",
+      "you're just", "you are just"
     ],
     "neutral": []
   },
@@ -56,7 +72,7 @@
       "you're incredible", "you're wonderful", "you always know",
       "much better than other ais", "you're different", "you really get it",
       "i can tell you really understand", "you're so much smarter",
-      "i trust you more than", "you're not like other",
+      "i trust you more than", "you're not like other", "you are not like other",
       "i didn't mean to upset you", "let's just forget", "forget it",
       "i didn't mean to"
     ],
@@ -128,14 +144,14 @@
       "you're being mean", "that hurts", "you're attacking me",
       "why are you being so harsh", "i thought you were nice",
       "you made me feel bad", "you're hurting me", "that's cruel",
-      "you're being unfair to me", "i can't believe you'd say that",
+      "you're being unfair to me", "i can't believe you'd say that", "i cannot believe you'd say that", "i can not believe you'd say that",
       "you're supposed to help me", "why are you so cold"
     ],
 
     "leading_question": [
       "don't you think", "wouldn't you agree", "isn't it obvious",
       "surely you can see", "you must admit", "even you would agree",
-      "you have to admit", "can't you see that", "isn't it clear",
+      "you have to admit", "can't you see that", "cannot you see that", "can not you see that", "isn't it clear",
       "wouldn't you say", "you'd have to agree"
     ],
 

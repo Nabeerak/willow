@@ -444,6 +444,9 @@ class WillowAgent:
         # m-zone changes. Tracks zone injected on the previous turn.
         self._last_injected_zone: Optional[str] = None
 
+        # Voice zone tracking on WillowAgent — guards switch_voice_for_zone calls.
+        self._last_voice_zone: str = "neutral_m"
+
         # Tier 4 rapid-fire debounce (Fix 3): timestamp (perf_counter ms) of the
         # last T4 execution. Prevents cancel/restart stuttering on rapid speech bursts.
         self._last_t4_fire_time: float = 0.0
@@ -681,10 +684,14 @@ class WillowAgent:
                 text=agent_text,
             )
 
+            _avg_pitch = getattr(turn, 'average_pitch', 0.0)
+            if _avg_pitch > 0:
+                self._last_pitch_hz = int(_avg_pitch)
+
             result = await self.handle_user_input(
                 user_input=user_transcript,
                 transcription_confidence=getattr(turn, 'confidence', 1.0),
-                average_pitch=getattr(turn, 'average_pitch', 0.0),
+                average_pitch=_avg_pitch,
             )
 
             # Override last_agent_response with the real Gemini transcription.
@@ -724,9 +731,6 @@ class WillowAgent:
                 user_input=user_transcript,
             )
 
-            # Fix 6: cancel filler before real response begins to prevent audio overlap
-            self._filler_player.cancel()
-
             zone = get_m_range(state.current_m)
             behavioral_note = self._last_behavioral_note
             self._last_behavioral_note = None  # Consume — one-shot per turn
@@ -755,7 +759,11 @@ class WillowAgent:
                     directive += f"\n{behavioral_trait}"
                 await self._streaming_session.inject_behavioral_context(directive)
                 self._last_injected_zone = zone
-                await self._streaming_session.switch_voice_for_zone(zone)
+                if zone != self._last_voice_zone:
+                    old_zone = self._last_voice_zone
+                    self._last_voice_zone = zone
+                    logger.info("[VOICE] %s → %s", old_zone, zone)
+                    await self._streaming_session.switch_voice_for_zone(zone)
             elif behavioral_note:
                 # Same zone, tactic fired — tactic + opener (~120 tokens cheaper than full directive).
                 opener_only = f'Begin your next response with: "{style.opener}"'
@@ -1288,11 +1296,21 @@ class WillowAgent:
                 f"(budget: {self.config.latency.tier1_ms}ms)"
             )
 
+        # Sovereign truth pre-check: keyword scan (with contraction normalization)
+        # before T2 so truth conflicts trigger T4 independently of behavioral state.
+        _truth_candidate = self._sovereign_cache.check_contradiction(user_input, 1.0)
+
         # ====================================================================
         # Tier 2: Metabolism (<5ms) - real Tier2Metabolism + StateManager
         # ====================================================================
         # Determine m_modifier from heuristics (Tier 3 will refine this)
         m_modifier, is_sovereign_spike = self._calculate_m_modifier(user_input)
+
+        # If truth conflict detected, override is_sovereign_spike so state update
+        # and T4 both fire regardless of whether the contracted form matched T2.
+        if _truth_candidate:
+            is_sovereign_spike = True
+            requires_tier4 = True
         self._last_tier2_modifier = m_modifier  # stored for Tier 3 retroactive correction
         self._last_tier2_turn_count = current_state.turn_count + 1  # Q10/Q21: will be this after update()
 
@@ -1370,6 +1388,7 @@ class WillowAgent:
             )
             if filler_audio_path:
                 clip_name = filler_audio_path.split("/")[-1].replace(".wav", "")
+                await asyncio.sleep(0.05)  # 50ms grace window — prevents trailing mic static from cancelling filler
                 self._interruption_handler.start_agent_speaking()
                 await self._filler_player.play(clip_name)
                 logger.debug(
