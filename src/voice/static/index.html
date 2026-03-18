@@ -206,7 +206,7 @@ async function toggleMic() {
 async function startMic() {
   try {
     mediaStream = await navigator.mediaDevices.getUserMedia({
-      audio: { sampleRate: 16000, channelCount: 1, echoCancellation: true, noiseSuppression: true }
+      audio: { sampleRate: 16000, channelCount: 1, echoCancellation: true, noiseSuppression: true, autoGainControl: false }
     });
     audioCtx = new AudioContext({ sampleRate: 16000 });
     if (audioCtx.state === 'suspended') await audioCtx.resume();
