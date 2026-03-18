@@ -1056,7 +1056,7 @@
           const sourceRate = this.#audioContext.sampleRate;
 
           const SILENCE_RMS = 400;        // 16-bit PCM RMS threshold for "silence"
-          const SILENCE_MS  = 1500;       // 1.5s of silence triggers end_turn
+          const SILENCE_MS  = 800;        // 0.8s of silence triggers end_turn
           let silenceStart = null;
           let turnActive = false;
 

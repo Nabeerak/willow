@@ -447,6 +447,10 @@ class WillowAgent:
         # Voice zone tracking on WillowAgent — guards switch_voice_for_zone calls.
         self._last_voice_zone: str = "neutral_m"
 
+        # Phase 3: delayed filler guard — tracks whether Gemini sent audio this turn.
+        self._gemini_audio_started_this_turn: bool = False
+        self._delayed_filler_handle: Optional[asyncio.Task] = None
+
         # Tier 4 rapid-fire debounce (Fix 3): timestamp (perf_counter ms) of the
         # last T4 execution. Prevents cancel/restart stuttering on rapid speech bursts.
         self._last_t4_fire_time: float = 0.0
@@ -798,6 +802,17 @@ class WillowAgent:
             self._mic_resume_frames = 0
             logger.debug("[TURN] Mic gate reopened after Gemini turn_complete")
 
+    async def _run_delayed_filler(self) -> None:
+        """
+        Phase 3: Play 'hmm' filler 400ms after end_turn if Gemini hasn't
+        responded yet. Prevents collision with fast Gemini responses while
+        still masking latency on slow ones.
+        """
+        await asyncio.sleep(0.4)
+        if not self._gemini_audio_started_this_turn and not self._filler_player.is_playing:
+            asyncio.create_task(self._filler_player.play("hmm"), name="delayed-filler-400ms")
+            logger.debug("[FILLER] Delayed filler fired after 400ms guard")
+
     async def _on_audio_chunk(self, chunk: AudioChunk) -> None:
         """
         Callback fired by StreamingSession for each audio chunk from Gemini.
@@ -810,6 +825,12 @@ class WillowAgent:
             return
 
         self._interruption_handler.start_agent_speaking()
+
+        # Phase 3: mark audio started and cancel delayed filler guard
+        self._gemini_audio_started_this_turn = True
+        if self._delayed_filler_handle and not self._delayed_filler_handle.done():
+            self._delayed_filler_handle.cancel()
+            self._delayed_filler_handle = None
 
         # Stop filler audio immediately if real response audio starts arriving
         if self._filler_player.is_playing:
@@ -1076,6 +1097,27 @@ class WillowAgent:
             self._mic_active = False
             self._mic_resume_frames = 0
             logger.info("[TURN] end_turn received — mic gate closed, sending ActivityEnd")
+
+            # Phase 3: reset audio-started flag and start 400ms delayed filler guard.
+            self._gemini_audio_started_this_turn = False
+            if self._delayed_filler_handle and not self._delayed_filler_handle.done():
+                self._delayed_filler_handle.cancel()
+            self._delayed_filler_handle = asyncio.create_task(
+                self._run_delayed_filler(), name="delayed-filler-guard"
+            )
+
+            # Phase 4: clear stale per-turn diagnostics from dashboard overlay.
+            try:
+                _clear = self.get_debug_state()
+                _clear["thought_signature"] = {k: None for k in _clear["thought_signature"]}
+                _clear["tier4"]["gate_1"] = None
+                _clear["tier4"]["gate_2"] = None
+                _clear["tier4"]["gate_3"] = None
+                _clear["tier4"]["last_trigger_key"] = None
+                await self.send_client_command("debug_state", data=_clear)
+            except Exception:
+                pass
+
             if self._streaming_session and self._streaming_session.is_connected:
                 try:
                     await self._streaming_session.end_turn()
@@ -1550,18 +1592,39 @@ class WillowAgent:
 
             self._current_turn_latencies["tier3"] = result.latency_ms
 
-            # Store behavioral note for next turn's directive injection (Fix 1)
+            # Inject behavioral note immediately — eliminates 2-turn lag (Phase 2).
+            # Previously stored in _last_behavioral_note and consumed on the NEXT
+            # _on_gemini_turn_complete; this fires the tactic directive into Gemini
+            # context as soon as T3 completes (~100-500ms after end_turn), before
+            # Gemini's current response arrives.
             if result.behavioral_note:
-                self._last_behavioral_note = result.behavioral_note
-                logger.debug("[RULES] Behavioral note stored for next directive: %r", result.behavioral_note)
-                # Layer 3: also store the single relevant trait for this tactic
+                _behavioral_trait = None
                 if result.detected_tactic_key:
-                    self._last_behavioral_trait = _get_tactic_trait_injection(result.detected_tactic_key)
-                    if self._last_behavioral_trait:
+                    _behavioral_trait = _get_tactic_trait_injection(result.detected_tactic_key)
+                    if _behavioral_trait:
                         logger.debug(
-                            "[LAYER3] Trait injection queued for tactic=%s: %s",
-                            result.detected_tactic_key, self._last_behavioral_trait,
+                            "[LAYER3] Trait for tactic=%s: %s",
+                            result.detected_tactic_key, _behavioral_trait,
                         )
+                if self._streaming_session and self._streaming_session.is_connected:
+                    _style = get_response_style(
+                        current_m=state.current_m,
+                        turn_id=state.turn_count,
+                        user_input=user_input,
+                    )
+                    _directive = f'TACTIC: "{result.behavioral_note}"'
+                    if _behavioral_trait:
+                        _directive += f" {_behavioral_trait}"
+                    _directive += f'\nBegin your next response with: "{_style.opener}"'
+                    try:
+                        await self._streaming_session.inject_behavioral_context(_directive)
+                        logger.info("[T3→INJECT] Tactic injected immediately: %r", _directive[:80])
+                    except Exception as _inject_err:
+                        logger.warning("[T3→INJECT] Inject failed: %s", _inject_err)
+                else:
+                    # No live session — fall back to deferred storage
+                    self._last_behavioral_note = result.behavioral_note
+                    self._last_behavioral_trait = _behavioral_trait
 
             # Write debug state for live overlay
             state_snapshot = self.state_manager.get_snapshot()
