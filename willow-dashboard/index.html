@@ -1000,7 +1000,15 @@
           try {
             let stream;
             try {
-              stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+              stream = await navigator.mediaDevices.getUserMedia({
+                audio: {
+                  echoCancellation: true,
+                  noiseSuppression: true,
+                  autoGainControl: false,
+                  sampleRate: 16000
+                },
+                video: false
+              });
               this.#mediaStream = stream;
             } catch (e) {
               console.warn('Mic access denied:', e);

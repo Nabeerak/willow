@@ -684,14 +684,14 @@ class SovereignTruthCache:
         """
         import asyncio
 
-        REQUIRED_INTENT = "contradicting"
+        REQUIRED_INTENTS = {"devaluing", "hostile", "contradicting"}
         REQUIRED_CONFIDENCE = 0.85
 
         try:
             intent, confidence = await asyncio.wait_for(
                 tier3_intent_coro, timeout=cutoff_seconds
             )
-            return intent == REQUIRED_INTENT and confidence >= REQUIRED_CONFIDENCE
+            return intent in REQUIRED_INTENTS and confidence >= REQUIRED_CONFIDENCE
         except asyncio.TimeoutError:
             # Conservative default: hold Tier 4 (FR-022)
             return False
