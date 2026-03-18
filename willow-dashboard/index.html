@@ -834,7 +834,12 @@
           setDbg('dbg-tone', ts.tone);
           setDbg('dbg-tactic', ts.detected_tactic);
           setDbg('dbg-m-modifier', ts.m_modifier?.toFixed(2));
-          setDbg('dbg-tier-fired', ts.tier_fired);
+          const tierFired = ts.tier_fired;
+          setDbg('dbg-tier-fired',
+            typeof tierFired === 'object' && tierFired !== null
+              ? (tierFired.trigger_type || tierFired.tier || JSON.stringify(tierFired))
+              : tierFired ?? '--'
+          );
           setDbg('dbg-rationale', ts.rationale);
 
           // Tier 4 Gates
@@ -1333,16 +1338,8 @@
 
         #startDebugPolling() {
           this.#stopDebugPolling();
-          // Fallback poll every 5s — primary updates come via WS push.
-          // Only catches edge cases where a WS push was missed.
-          this.#debugPollInterval = window.setInterval(async () => {
-            if (!this.#sessionId) return;
-            try {
-              const resp = await fetch(`${BACKEND_HTTP}/api/v1/session/${this.#sessionId}/debug`);
-              if (resp.ok) this.#updateDebugOverlay(await resp.json());
-            } catch { /* non-fatal — backend may not be running */ }
-          }, 5000);
-          // Also fetch immediately
+          // Polling removed — debug state arrives via WS push after T2/T3/T4.
+          // Fetch once on session start to populate initial state.
           if (this.#sessionId) {
             fetch(`${BACKEND_HTTP}/api/v1/session/${this.#sessionId}/debug`)
               .then(r => r.ok ? r.json() : null)
