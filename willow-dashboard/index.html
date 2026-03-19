@@ -838,12 +838,7 @@
           setDbg('dbg-tone', ts.tone);
           setDbg('dbg-tactic', ts.detected_tactic);
           setDbg('dbg-m-modifier', ts.m_modifier?.toFixed(2));
-          const tierFired = ts.tier_fired;
-          setDbg('dbg-tier-fired',
-            typeof tierFired === 'object' && tierFired !== null
-              ? (tierFired.trigger_type || tierFired.tier || JSON.stringify(tierFired))
-              : tierFired ?? '--'
-          );
+          setDbg('dbg-tier-fired', ts.tier_fired != null ? `Tier ${ts.tier_fired}` : null);
           setDbg('dbg-rationale', ts.rationale);
 
           // Tier 4 Gates

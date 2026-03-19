@@ -2049,7 +2049,7 @@ class WillowAgent:
                 "tone": ts.tone if ts else None,
                 "detected_tactic": ts.detected_tactic if ts else None,
                 "m_modifier": ts.m_modifier if ts else None,
-                "tier_fired": ts.tier_trigger if ts else None,
+                "tier_fired": int(ts.tier_trigger) if ts and ts.tier_trigger is not None else None,
                 "rationale": ts.rationale if ts else None,
             },
             "tier4": {
