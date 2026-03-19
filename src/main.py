@@ -804,11 +804,11 @@ class WillowAgent:
 
     async def _run_delayed_filler(self) -> None:
         """
-        Phase 3: Play 'hmm' filler 400ms after end_turn if Gemini hasn't
+        Phase 3: Play 'hmm' filler 200ms after end_turn if Gemini hasn't
         responded yet. Prevents collision with fast Gemini responses while
         still masking latency on slow ones.
         """
-        await asyncio.sleep(0.4)
+        await asyncio.sleep(0.2)
         if not self._gemini_audio_started_this_turn and not self._filler_player.is_playing:
             asyncio.create_task(self._filler_player.play("hmm"), name="delayed-filler-400ms")
             logger.debug("[FILLER] Delayed filler fired after 400ms guard")
@@ -836,6 +836,12 @@ class WillowAgent:
         if self._filler_player.is_playing:
             self._filler_player.cancel()
             logger.debug("Canceled active filler audio because real response started")
+            
+            # Phase 3: Add flush_audio_buffer to force frontend to drop remaining filler PCM
+            try:
+                await self.send_client_command("flush_audio_buffer", fade_duration_ms=10)
+            except Exception as e:
+                logger.warning(f"Failed to send flush_audio_buffer: {e}")
 
         # Forward audio to browser if WebSocket is connected
         if self._client_websocket:
@@ -1098,7 +1104,14 @@ class WillowAgent:
             self._mic_resume_frames = 0
             logger.info("[TURN] end_turn received — mic gate closed, sending ActivityEnd")
 
-            # Phase 3: reset audio-started flag and start 400ms delayed filler guard.
+            # CRITICAL: send ActivityEnd to Gemini FIRST — nothing may block this.
+            if self._streaming_session and self._streaming_session.is_connected:
+                try:
+                    await self._streaming_session.end_turn()
+                except Exception as e:
+                    logger.warning("[TURN] end_turn signal failed: %s", e)
+
+            # Phase 3: reset audio-started flag and start 200ms delayed filler guard.
             self._gemini_audio_started_this_turn = False
             if self._delayed_filler_handle and not self._delayed_filler_handle.done():
                 self._delayed_filler_handle.cancel()
@@ -1106,23 +1119,19 @@ class WillowAgent:
                 self._run_delayed_filler(), name="delayed-filler-guard"
             )
 
-            # Phase 4: clear stale per-turn diagnostics from dashboard overlay.
-            try:
-                _clear = self.get_debug_state()
-                _clear["thought_signature"] = {k: None for k in _clear["thought_signature"]}
-                _clear["tier4"]["gate_1"] = None
-                _clear["tier4"]["gate_2"] = None
-                _clear["tier4"]["gate_3"] = None
-                _clear["tier4"]["last_trigger_key"] = None
-                await self.send_client_command("debug_state", data=_clear)
-            except Exception:
-                pass
-
-            if self._streaming_session and self._streaming_session.is_connected:
+            # Phase 4: clear stale per-turn diagnostics — non-blocking fire-and-forget.
+            async def _clear_stale_overlay():
                 try:
-                    await self._streaming_session.end_turn()
-                except Exception as e:
-                    logger.warning("[TURN] end_turn signal failed: %s", e)
+                    _clear = self.get_debug_state()
+                    _clear["thought_signature"] = {k: None for k in _clear["thought_signature"]}
+                    _clear["tier4"]["gate_1"] = None
+                    _clear["tier4"]["gate_2"] = None
+                    _clear["tier4"]["gate_3"] = None
+                    _clear["tier4"]["last_trigger_key"] = None
+                    await self.send_client_command("debug_state", data=_clear)
+                except Exception:
+                    pass
+            asyncio.create_task(_clear_stale_overlay(), name="clear-stale-overlay")
 
         elif msg_type == "vision_frame":
             # Rate limit: drop frame if there is already a vision queue or send running
