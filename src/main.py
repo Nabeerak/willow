@@ -804,14 +804,14 @@ class WillowAgent:
 
     async def _run_delayed_filler(self) -> None:
         """
-        Phase 3: Play 'hmm' filler 200ms after end_turn if Gemini hasn't
+        Phase 3: Play 'hmm' filler 150ms after end_turn if Gemini hasn't
         responded yet. Prevents collision with fast Gemini responses while
         still masking latency on slow ones.
         """
-        await asyncio.sleep(0.2)
+        await asyncio.sleep(0.15)
         if not self._gemini_audio_started_this_turn and not self._filler_player.is_playing:
-            asyncio.create_task(self._filler_player.play("hmm"), name="delayed-filler-400ms")
-            logger.debug("[FILLER] Delayed filler fired after 400ms guard")
+            asyncio.create_task(self._filler_player.play("hmm"), name="delayed-filler-150ms")
+            logger.debug("[FILLER] Delayed filler fired after 150ms guard")
 
     async def _on_audio_chunk(self, chunk: AudioChunk) -> None:
         """
@@ -1437,7 +1437,7 @@ class WillowAgent:
                 entering_high_m=entering_high_m,
                 warm_tone=warm_tone,
             )
-            if filler_audio_path:
+            if filler_audio_path and not self._gemini_audio_started_this_turn:
                 clip_name = filler_audio_path.split("/")[-1].replace(".wav", "")
                 await asyncio.sleep(0.05)  # 50ms grace window — prevents trailing mic static from cancelling filler
                 self._interruption_handler.start_agent_speaking()

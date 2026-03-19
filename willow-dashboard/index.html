@@ -541,7 +541,11 @@
             this.#startDebugPolling();
           }
           else if (newState === 'MIC_OFF') {
-            // Mic toggled off — stop audio capture but keep WS + session alive
+            // Mic toggled off — send end_turn FIRST so Gemini doesn't hang,
+            // then stop audio capture but keep WS + session alive
+            if (this.#ws && this.#ws.readyState === WebSocket.OPEN) {
+              this.#ws.send(JSON.stringify({ type: 'end_turn' }));
+            }
             this.#elements.micIcon.classList.remove('text-blue-400');
             this.#elements.micIcon.classList.add('text-gray-400');
             this.#elements.micProgress.style.strokeDashoffset = '289';
@@ -1060,6 +1064,9 @@
           let silenceStart = null;
           let turnActive = false;
 
+          // Pitch emission throttle — send at most once per 100ms
+          let lastPitchEmit = 0;
+
           this.#scriptProcessor.onaudioprocess = (e) => {
             if (this.#state.status !== 'LIVE' || !this.#ws || this.#ws.readyState !== WebSocket.OPEN) return;
 
@@ -1080,6 +1087,22 @@
             let sum = 0;
             for (let i = 0; i < pcm16.length; i++) sum += pcm16[i] * pcm16[i];
             const rms = Math.sqrt(sum / pcm16.length);
+
+            // Emit dominant pitch_hz via FFT analyser (throttled to 100ms)
+            const now = performance.now();
+            if (this.#analyser && now - lastPitchEmit > 100) {
+              lastPitchEmit = now;
+              const freqData = new Uint8Array(this.#analyser.frequencyBinCount);
+              this.#analyser.getByteFrequencyData(freqData);
+              let maxVal = 0, maxIdx = 0;
+              for (let i = 1; i < freqData.length; i++) {
+                if (freqData[i] > maxVal) { maxVal = freqData[i]; maxIdx = i; }
+              }
+              if (maxVal > 10) {
+                const hz = maxIdx * sourceRate / this.#analyser.fftSize;
+                this.#ws.send(JSON.stringify({ type: 'pitch', hz: Math.round(hz) }));
+              }
+            }
 
             if (rms > SILENCE_RMS) {
               silenceStart = null;
