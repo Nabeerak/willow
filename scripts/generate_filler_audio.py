@@ -31,7 +31,7 @@ from pathlib import Path
 from typing import Optional, Tuple, Dict
 
 # Constants
-SAMPLE_RATE = 24000  # 24kHz
+SAMPLE_RATE = 24000  # 16kHz
 BIT_DEPTH = 16  # 16-bit
 CHANNELS = 1  # Mono
 OUTPUT_DIR = Path(__file__).parent.parent / "data" / "filler_audio"

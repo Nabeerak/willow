@@ -213,8 +213,8 @@ class FillerAudioPlayer:
         starting) to actually stop the network transfer and browser playback,
         preventing audio overlap.
         """
-        # 24kHz * 2 bytes/sample * 1 channel = 48000 bytes per second
-        duration_s = len(raw_pcm) / 48_000
+        # 16kHz * 2 bytes/sample * 1 channel = 32000 bytes per second
+        duration_s = len(raw_pcm) / 32_000
         logger.debug(
             "Filler playback started: clip='%s' duration=%.0fms",
             clip_name, duration_s * 1000,
@@ -222,7 +222,7 @@ class FillerAudioPlayer:
         start = time.perf_counter()
         self._filler_active.set()
 
-        chunk_size = 960   # 20ms of PCM data (48000 bytes/s * 0.020)
+        chunk_size = 640   # 20ms of PCM data (32000 bytes/s * 0.020)
         sleep_duration = 0.020
         
         try:

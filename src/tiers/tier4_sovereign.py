@@ -291,19 +291,17 @@ class Tier4Sovereign:
 
         if candidate is None:
             gate_results["gate_1"] = {
-                "passed": False,
                 "asr_confidence": round(transcription_confidence, 2),
                 "keyword_match": "NONE",
-                "gate_1": "FAIL" if transcription_confidence < MIN_TRANSCRIPTION_CONFIDENCE else "NO TRIGGER",
+                "passed": False,
             }
             state.last_gate_results = gate_results
             return None
 
         gate_results["gate_1"] = {
-            "passed": True,
             "asr_confidence": round(transcription_confidence, 2),
             "keyword_match": candidate.key,
-            "gate_1": "PASS",
+            "passed": True,
         }
         state.last_sovereign_key = candidate.key
         state.last_transcription_confidence = transcription_confidence
