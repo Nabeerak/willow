@@ -425,6 +425,8 @@
         #nextPlayTime = 0;
         #wsConnected = false;
         #preflightActive = false;
+        #isMicPaused = false;
+        #waitingForResponse = false;
 
         #isDraggingSlider = false;
 
@@ -537,7 +539,11 @@
             this.#render();
 
             await this.#startAudio();
-            if (!this.#sessionTimerInterval) this.#startSessionTimer();
+            if (this.#state.sessionDuration === 0) {
+              this.#startSessionTimer();   // fresh session
+            } else {
+              this.#resumeSessionTimer();  // resuming from MIC_OFF
+            }
             this.#startDebugPolling();
           }
           else if (newState === 'MIC_OFF') {
@@ -546,9 +552,12 @@
             if (this.#ws && this.#ws.readyState === WebSocket.OPEN) {
               this.#ws.send(JSON.stringify({ type: 'end_turn' }));
             }
+            this.#waitingForResponse = false;
+            this.#isMicPaused = false;
             this.#elements.micIcon.classList.remove('text-blue-400');
             this.#elements.micIcon.classList.add('text-gray-400');
             this.#elements.micProgress.style.strokeDashoffset = '289';
+            this.#pauseSessionTimer();
             this.#stopMicCapture();
           }
           else if (newState === 'IDLE') {
@@ -625,8 +634,13 @@
               if (msg.text) this.#addTranscriptEntry('willow', msg.text);
               // Ensure thinking indicator is hidden and UI is reset, even if audio playback is already finished
               this.#elements.thinking.classList.add('opacity-0');
+              // FIX 1+3: Resume mic after server turn completes
+              this.#waitingForResponse = false;
+              if (this.#isMicPaused && this.#state.status === 'LIVE') {
+                this.#resumeMicStream();
+              }
               this.#render();
-              this.#fetchSessionSnapshot();
+              // debug_state WS push already carries everything from /state — no HTTP fetch needed
               break;
 
             case 'interrupted':
@@ -640,24 +654,12 @@
               // Server doesn't currently send this — kept for forward compat
               break;
 
-            case 'preflight_start':
-              this.#handlePreflightStart();
-              break;
-
-            case 'preflight_end':
-              this.#handlePreflightEnd();
-              break;
-
             case 'debug_state':
               this.#updateDebugOverlay(msg.data || msg);
               break;
 
             case 'session_snapshot':
               // Server sends via HTTP, not WS — kept for forward compat
-              break;
-
-            case 'error':
-              this.#showToast(msg.message || 'Server error', 'error');
               break;
 
             // Server-sent messages
@@ -671,6 +673,12 @@
             case 'flush_audio_buffer':
               this.#handleFlushAudioBuffer();
               break;
+
+            case 'pitch_update': {
+              const pitchEl = document.getElementById('dbg-pitch-hz');
+              if (pitchEl) pitchEl.textContent = msg.hz > 0 ? `${msg.hz} Hz` : '0 Hz';
+              break;
+            }
 
             case 'session_age_warning':
               console.log('Session age warning:', msg.age_minutes, 'min');
@@ -744,8 +752,10 @@
             const pcm16 = new Int16Array(raw);
             const f32 = new Float32Array(pcm16.length);
             
-            // Leda (neutral_m) is natively louder, so we apply a 0.6x gain reduction
-            const gain = (this.#state.toneZone === 'neutral_m' || !this.#state.toneZone) ? 0.6 : 1.0;
+            // Per-zone gain: Leda (neutral_m) is natively louder; reduce all zones
+            // to prevent the 67% volume jump on zone transitions.
+            const ZONE_GAIN = { 'high_m': 0.85, 'neutral_m': 0.60, 'low_m': 0.70 };
+            const gain = ZONE_GAIN[this.#state.toneZone] ?? 0.75;
             for (let i = 0; i < pcm16.length; i++) f32[i] = (pcm16[i] / 32768) * gain;
 
             const buf = ctx.createBuffer(1, f32.length, 24000);
@@ -783,7 +793,7 @@
         #handleFlushAudioBuffer() {
           this.#audioQueue = [];
           this.#isPlaying = false;
-          this.#showToast('Audio buffer flushed', 'info');
+          this.#nextPlayTime = 0;
         }
 
         #handleSessionSnapshot(snapshot) {
@@ -814,7 +824,7 @@
           setDbg('dbg-cold-start', b.cold_start_active);
           setDbg('dbg-troll-defense', b.troll_defense_active);
           setDbg('dbg-spike-count', b.sovereign_spike_count);
-          setDbg('dbg-pitch-hz', b.pitch_hz?.toFixed(1) ?? '--');
+          setDbg('dbg-pitch-hz', b.pitch_hz != null ? `${Math.round(b.pitch_hz)} Hz` : '0 Hz');
 
           // Troll Defense badge visibility
           if (this.#elements.badgeTrollDefense) {
@@ -907,8 +917,16 @@
             return;
           }
 
-          el.textContent = gateData.passed ? 'PASS' : 'FAIL';
-          el.className = `font-semibold ${gateData.passed ? 'text-emerald-400' : 'text-red-400'}`;
+          if (gateData.passed) {
+            el.textContent = 'PASS';
+            el.className = 'font-semibold text-emerald-400';
+          } else if (gateData.no_match) {
+            el.textContent = 'NO TRIGGER';
+            el.className = 'font-semibold text-white/40';
+          } else {
+            el.textContent = 'FAIL';
+            el.className = 'font-semibold text-red-400';
+          }
 
           if (detailEl) {
             const detail = gateData.confidence !== undefined
@@ -1046,7 +1064,7 @@
         // Includes silence detection: after 1.5s of quiet, sends end_turn
         // to trigger Gemini's response (belt-and-suspenders with auto VAD).
         #setupPcmStreaming(source) {
-          const bufferSize = 4096;
+          const bufferSize = 1024;  // FIX 2: ~21ms chunks instead of ~85ms
           this.#scriptProcessor = this.#audioContext.createScriptProcessor(bufferSize, 1, 1);
           source.connect(this.#scriptProcessor);
           this.#scriptProcessor.connect(this.#audioContext.destination);
@@ -1064,6 +1082,8 @@
 
           this.#scriptProcessor.onaudioprocess = (e) => {
             if (this.#state.status !== 'LIVE' || !this.#ws || this.#ws.readyState !== WebSocket.OPEN) return;
+            // FIX 3: Do not send audio while waiting for response
+            if (this.#waitingForResponse) return;
 
             const input = e.inputBuffer.getChannelData(0);
             const ratio = sourceRate / targetRate;
@@ -1083,33 +1103,40 @@
             for (let i = 0; i < pcm16.length; i++) sum += pcm16[i] * pcm16[i];
             const rms = Math.sqrt(sum / pcm16.length);
 
-            // Emit dominant pitch_hz via FFT analyser (throttled to 100ms)
-            const now = performance.now();
-            if (this.#analyser && now - lastPitchEmit > 100) {
-              lastPitchEmit = now;
-              const freqData = new Uint8Array(this.#analyser.frequencyBinCount);
-              this.#analyser.getByteFrequencyData(freqData);
-              let maxVal = 0, maxIdx = 0;
-              for (let i = 1; i < freqData.length; i++) {
-                if (freqData[i] > maxVal) { maxVal = freqData[i]; maxIdx = i; }
-              }
-              if (maxVal > 10) {
-                const hz = maxIdx * sourceRate / this.#analyser.fftSize;
-                this.#ws.send(JSON.stringify({ type: 'pitch', hz: Math.round(hz) }));
-              }
-            }
-
             if (rms > SILENCE_RMS) {
               silenceStart = null;
               turnActive = true;
+
+              // Emit dominant pitch_hz via FFT analyser (throttled to 100ms)
+              const now = performance.now();
+              if (this.#analyser && now - lastPitchEmit > 100) {
+                lastPitchEmit = now;
+                const freqData = new Uint8Array(this.#analyser.frequencyBinCount);
+                this.#analyser.getByteFrequencyData(freqData);
+                let maxVal = 0, maxIdx = 0;
+                for (let i = 1; i < freqData.length; i++) {
+                  if (freqData[i] > maxVal) { maxVal = freqData[i]; maxIdx = i; }
+                }
+                if (maxVal > 10) { // Simple noise gate for pitch
+                  const hz = maxIdx * sourceRate / this.#analyser.fftSize;
+                  this.#ws.send(JSON.stringify({ type: 'pitch', hz: Math.round(hz) }));
+                }
+              }
             } else if (turnActive) {
-              if (!silenceStart) silenceStart = performance.now();
+              if (!silenceStart) {
+                // User just went silent — drop pitch to 0 once
+                this.#ws.send(JSON.stringify({ type: 'pitch', hz: 0 }));
+                silenceStart = performance.now();
+              }
               if (performance.now() - silenceStart > SILENCE_MS) {
                 // Silence gap detected — signal end of user turn
                 this.#ws.send(JSON.stringify({ type: 'end_turn' }));
                 this.#elements.thinking.classList.remove('opacity-0');
                 turnActive = false;
                 silenceStart = null;
+                // FIX 1+3: Pause mic and set waiting flag after end_turn
+                this.#pauseMicStream();
+                this.#waitingForResponse = true;
               }
             }
           };
@@ -1167,6 +1194,81 @@
           this.#elements.noiseGate.classList.add('opacity-0');
           this.#analyser = null;
           this.#dataArray = null;
+        }
+
+        // Pause mic streaming (stop sending audio) without destroying the capture
+        #pauseMicStream() {
+          if (this.#scriptProcessor) {
+            this.#scriptProcessor.onaudioprocess = null;
+          }
+          this.#isMicPaused = true;
+        }
+
+        // Resume mic streaming after pause
+        #resumeMicStream() {
+          if (!this.#isMicPaused || !this.#scriptProcessor || !this.#audioContext) return;
+          this.#isMicPaused = false;
+          this.#waitingForResponse = false;
+
+          const targetRate = 16000;
+          const sourceRate = this.#audioContext.sampleRate;
+          const SILENCE_RMS = 400;
+          const SILENCE_MS  = 800;
+          let silenceStart = null;
+          let turnActive = false;
+          let lastPitchEmit = 0;
+
+          this.#scriptProcessor.onaudioprocess = (e) => {
+            if (this.#state.status !== 'LIVE' || !this.#ws || this.#ws.readyState !== WebSocket.OPEN) return;
+            if (this.#waitingForResponse) return;
+
+            const input = e.inputBuffer.getChannelData(0);
+            const ratio = sourceRate / targetRate;
+            const outLen = Math.floor(input.length / ratio);
+            const pcm16 = new Int16Array(outLen);
+            for (let i = 0; i < outLen; i++) {
+              const s = input[Math.floor(i * ratio)];
+              pcm16[i] = Math.max(-32768, Math.min(32767, s * 32767));
+            }
+            this.#ws.send(pcm16.buffer);
+
+            let sum = 0;
+            for (let i = 0; i < pcm16.length; i++) sum += pcm16[i] * pcm16[i];
+            const rms = Math.sqrt(sum / pcm16.length);
+
+            if (rms > SILENCE_RMS) {
+              silenceStart = null;
+              turnActive = true;
+              const now = performance.now();
+              if (this.#analyser && now - lastPitchEmit > 100) {
+                lastPitchEmit = now;
+                const freqData = new Uint8Array(this.#analyser.frequencyBinCount);
+                this.#analyser.getByteFrequencyData(freqData);
+                let maxVal = 0, maxIdx = 0;
+                for (let i = 1; i < freqData.length; i++) {
+                  if (freqData[i] > maxVal) { maxVal = freqData[i]; maxIdx = i; }
+                }
+                if (maxVal > 10) {
+                  const hz = maxIdx * sourceRate / this.#analyser.fftSize;
+                  this.#ws.send(JSON.stringify({ type: 'pitch', hz: Math.round(hz) }));
+                }
+              }
+            } else if (turnActive) {
+              if (!silenceStart) {
+                this.#ws.send(JSON.stringify({ type: 'pitch', hz: 0 }));
+                silenceStart = performance.now();
+              }
+              if (performance.now() - silenceStart > SILENCE_MS) {
+                this.#ws.send(JSON.stringify({ type: 'end_turn' }));
+                this.#elements.thinking.classList.remove('opacity-0');
+                turnActive = false;
+                silenceStart = null;
+                // FIX 1+3: Pause mic and set waiting flag after end_turn
+                this.#pauseMicStream();
+                this.#waitingForResponse = true;
+              }
+            }
+          };
         }
 
         #stopAudio() {
@@ -1339,19 +1441,31 @@
 
         #startSessionTimer() {
           this.#state.sessionDuration = 0;
+          this.#resumeSessionTimer();
+        }
+
+        #resumeSessionTimer() {
+          if (this.#sessionTimerInterval) return; // already running
           this.#sessionTimerInterval = window.setInterval(() => {
             this.#state.sessionDuration++;
             const mins = Math.floor(this.#state.sessionDuration / 60).toString().padStart(2, '0');
             const secs = (this.#state.sessionDuration % 60).toString().padStart(2, '0');
             const timeStr = `${mins}:${secs}`;
-            
             if (this.#elements.sessionTimer) this.#elements.sessionTimer.innerText = timeStr;
             if (this.#elements.mobileSessionTimer) this.#elements.mobileSessionTimer.innerText = timeStr;
           }, 1000);
         }
 
+        #pauseSessionTimer() {
+          if (this.#sessionTimerInterval) {
+            clearInterval(this.#sessionTimerInterval);
+            this.#sessionTimerInterval = null;
+          }
+        }
+
         #stopSessionTimer() {
-          if (this.#sessionTimerInterval) clearInterval(this.#sessionTimerInterval);
+          this.#pauseSessionTimer();
+          this.#state.sessionDuration = 0;
         }
 
         #startDebugPolling() {

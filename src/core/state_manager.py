@@ -347,6 +347,12 @@ class StateManager:
             else:
                 # Still in positive territory — increment counter but don't boost
                 self._state.consecutive_sincere_turns += 1
+                logger.debug(
+                    "Grace Boost skipped: current_m=%.2f >= 0 (already positive), "
+                    "consecutive_sincere=%d",
+                    self._state.current_m,
+                    self._state.consecutive_sincere_turns,
+                )
 
             return self._state
 

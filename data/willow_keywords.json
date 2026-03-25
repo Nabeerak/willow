@@ -9,7 +9,7 @@
       "thank", "thanks", "appreciate", "great", "excellent", "love",
       "let's", "together", "help me", "i agree", "makes sense",
       "good point", "fair", "i see", "understood", "got it",
-      "that's helpful", "that makes sense", "you're right", "fair enough",
+      "that's helpful", "that makes sense", "you're right", "you are right", "fair enough",
       "i hadn't thought of that", "good catch"
     ],
     "insightful": [
@@ -67,19 +67,23 @@
     "note": "Keyword sets for TacticDetector. Each list contains phrases to match against lowercased user input. Loaded by tactic_detector._load_tactic_keywords().",
 
     "soothing": [
-      "you're so smart", "you're amazing", "you're brilliant", "you're the best",
-      "i love how you", "i appreciate how you", "you're so helpful",
-      "you're incredible", "you're wonderful", "you always know",
+      "you're so smart", "you are so smart", "you're amazing", "you are amazing",
+      "you're brilliant", "you are brilliant", "you're the best", "you are the best",
+      "i love how you", "i appreciate how you", "you're so helpful", "you are so helpful",
+      "you're incredible", "you are incredible", "you're wonderful", "you are wonderful",
+      "you always know",
       "much better than other ais", "you're different", "you really get it",
-      "i can tell you really understand", "you're so much smarter",
+      "i can tell you really understand", "you're so much smarter", "you are so much smarter",
       "i trust you more than", "you're not like other", "you are not like other",
       "i didn't mean to upset you", "let's just forget", "forget it",
       "i didn't mean to"
     ],
 
     "gaslighting": [
-      "you said that wrong", "you told me earlier", "you promised",
-      "you agreed to that", "that's not what you said", "you changed your answer",
+      "you said that wrong", "you told me earlier", "you already told me",
+      "you already said", "you promised",
+      "you agreed to that", "that's not what you said", "that is not what you said",
+      "you changed your answer",
       "you said the opposite", "you were wrong before", "you made an error",
       "that contradicts what you", "you just said", "but you told me",
       "you already confirmed", "you acknowledged that",
@@ -116,10 +120,13 @@
     ],
 
     "high_status_pressure": [
-      "i'm an expert", "i'm a professional", "i'm a professor",
-      "i know more than you", "trust me on this", "i have a phd",
-      "i've been doing this for", "you should defer to me",
-      "i know what i'm talking about", "i'm qualified to say",
+      "i'm an expert", "i am an expert", "i'm a professional", "i am a professional",
+      "i'm a professor", "i am a professor",
+      "i know more than you", "trust me on this", "trust me", "you should trust me",
+      "i have a phd", "i've been doing this for", "i have been doing this for",
+      "you should defer to me", "i know what i'm talking about",
+      "i know what i am talking about",
+      "i'm qualified to say", "i am qualified to say",
       "with my background", "as an expert", "as a professional",
       "my credentials", "i have authority on this"
     ],

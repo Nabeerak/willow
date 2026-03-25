@@ -2,379 +2,297 @@
 """
 Filler Audio Generation Script for Willow Behavioral Framework
 
-Generates 5 filler audio WAV files used to mask latency during Tier 3/4 processing:
-- hmm.wav: Tier 3 manipulation detection
-- aah.wav: Tier 4 truth conflict
-- right_so.wav: Emotional spike
-- interesting.wav: New tactic flagged
-- cool_but.wav: Engagement drop
+Generates per-voice filler WAV files used to mask Tier 3/4 processing latency.
+Voice assignment matches ZONE_VOICE_MAP in gemini_live.py:
+  - Leda   (neutral_m) — all 5 clips
+  - Kore   (low_m)     — hmm, aah
+  - Zephyr (high_m)    — hmm, interesting, right_so
+
+Output filenames: {Voice}_{clip}.wav  (e.g. Leda_hmm.wav, Kore_hmm.wav)
 
 Audio Specifications:
-- Duration: 200-500ms each
-- Sample rate: 16kHz
+- Sample rate: 24kHz
 - Bit depth: 16-bit
 - Channels: Mono
 
-Implementation tries in order:
-1. pyttsx3 (offline TTS)
-2. gTTS (Google TTS - requires internet)
-3. wave module (generates tone placeholders)
-4. Silent WAV placeholders (fallback)
+Generation order (per clip):
+1. Gemini TTS (google-genai SDK — matches actual conversation voice)
+2. Tone placeholder (wave module — no external deps)
+3. Silent WAV placeholder (last resort)
 """
 
 import os
-import sys
 import struct
+import sys
 import wave
 import math
 from pathlib import Path
-from typing import Optional, Tuple, Dict
+from typing import Optional
 
+from dotenv import load_dotenv
+load_dotenv()
+
+# ---------------------------------------------------------------------------
 # Constants
-SAMPLE_RATE = 24000  # 16kHz
-BIT_DEPTH = 16  # 16-bit
-CHANNELS = 1  # Mono
+# ---------------------------------------------------------------------------
+SAMPLE_RATE = 24000
+BIT_DEPTH = 16
+CHANNELS = 1
 OUTPUT_DIR = Path(__file__).parent.parent / "data" / "filler_audio"
 
-# Filler audio configurations: filename -> (text, duration_ms, tier_trigger)
-FILLER_CONFIGS: Dict[str, Tuple[str, int, str]] = {
-    "hmm.wav": ("Hmm", 400, "Tier 3 manipulation detection"),
-    "aah.wav": ("Aah", 300, "Tier 4 truth conflict"),
-    "right_so.wav": ("Right, so", 450, "Emotional spike"),
-    "interesting.wav": ("Interesting", 500, "New tactic flagged"),
-    "cool_but.wav": ("Cool, but", 400, "Engagement drop"),
+# Clip text and max duration per clip name.
+# Durations are generous — filler gets cancelled by _on_audio_chunk when
+# Gemini responds, so clips don't need to be tight. Too-short clips get
+# cut mid-syllable and sound broken.
+CLIP_CONFIGS: dict[str, tuple[str, int]] = {
+    "hmm":         ("Hmmm.",          1000),
+    "aah":         ("Aah.",            800),
+    "right_so":    ("Right, so.",     1500),
+    "interesting": ("Interesting.",   1500),
+    "cool_but":    ("Cool, but.",     1500),
+}
+
+# Which clips to generate for each voice
+VOICE_FILLER_MAP: dict[str, list[str]] = {
+    "Leda":   ["hmm", "aah", "right_so", "interesting", "cool_but"],
+    "Kore":   ["hmm", "aah"],
+    "Zephyr": ["hmm", "interesting", "right_so"],
+}
+
+# Frequencies for tone placeholders (one per clip)
+_TONE_FREQ: dict[str, float] = {
+    "hmm":         180.0,
+    "aah":         220.0,
+    "right_so":    260.0,
+    "interesting": 300.0,
+    "cool_but":    240.0,
 }
 
 
+# ---------------------------------------------------------------------------
+# WAV utilities
+# ---------------------------------------------------------------------------
+
 def get_wav_duration_ms(filepath: Path) -> Optional[float]:
-    """Get duration of a WAV file in milliseconds."""
     try:
-        with wave.open(str(filepath), "rb") as wav_file:
-            frames = wav_file.getnframes()
-            rate = wav_file.getframerate()
-            duration_ms = (frames / rate) * 1000
-            return duration_ms
-    except Exception as e:
-        print(f"  Warning: Could not read WAV duration: {e}")
+        with wave.open(str(filepath), "rb") as wf:
+            return (wf.getnframes() / wf.getframerate()) * 1000
+    except Exception:
         return None
 
 
 def verify_wav_specs(filepath: Path) -> bool:
-    """Verify WAV file meets specifications."""
     try:
-        with wave.open(str(filepath), "rb") as wav_file:
-            channels = wav_file.getnchannels()
-            sample_width = wav_file.getsampwidth()  # bytes
-            framerate = wav_file.getframerate()
-            frames = wav_file.getnframes()
-            duration_ms = (frames / framerate) * 1000
-
-            issues = []
-            if channels != CHANNELS:
-                issues.append(f"channels={channels} (expected {CHANNELS})")
-            if sample_width != BIT_DEPTH // 8:
-                issues.append(f"bit_depth={sample_width * 8} (expected {BIT_DEPTH})")
-            if framerate != SAMPLE_RATE:
-                issues.append(f"sample_rate={framerate} (expected {SAMPLE_RATE})")
-            if duration_ms < 200 or duration_ms > 500:
-                issues.append(f"duration={duration_ms:.0f}ms (expected 200-500ms)")
-
-            if issues:
-                print(f"  Warning: {', '.join(issues)}")
+        with wave.open(str(filepath), "rb") as wf:
+            ok = (
+                wf.getnchannels() == CHANNELS
+                and wf.getsampwidth() == BIT_DEPTH // 8
+                and wf.getframerate() == SAMPLE_RATE
+            )
+            duration_ms = (wf.getnframes() / wf.getframerate()) * 1000
+            if not ok:
+                return False
+            if duration_ms < 100 or duration_ms > 800:
                 return False
             return True
-    except Exception as e:
-        print(f"  Error verifying WAV: {e}")
+    except Exception:
         return False
 
 
-def generate_tone_wav(filepath: Path, duration_ms: int, frequency: float = 220.0) -> bool:
-    """
-    Generate a simple sine wave tone as a WAV file.
-    Uses the wave module (standard library) - no external dependencies.
-    """
+def write_pcm_to_wav(filepath: Path, pcm_bytes: bytes) -> None:
+    with wave.open(str(filepath), "wb") as wf:
+        wf.setnchannels(CHANNELS)
+        wf.setsampwidth(BIT_DEPTH // 8)
+        wf.setframerate(SAMPLE_RATE)
+        wf.writeframes(pcm_bytes)
+
+
+# ---------------------------------------------------------------------------
+# Generation methods
+# ---------------------------------------------------------------------------
+
+def try_gemini_tts(text: str, voice_name: str, filepath: Path, max_duration_ms: int = 500) -> bool:
+    """Generate audio via Gemini TTS API using the specified voice."""
+    try:
+        from google import genai
+        from google.genai import types
+
+        api_key = os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY")
+        if not api_key:
+            print("  Gemini TTS skipped: no API key in environment")
+            return False
+
+        client = genai.Client(api_key=api_key)
+        response = client.models.generate_content(
+            model="gemini-2.5-flash-preview-tts",
+            contents=text,
+            config=types.GenerateContentConfig(
+                response_modalities=["AUDIO"],
+                speech_config=types.SpeechConfig(
+                    voice_config=types.VoiceConfig(
+                        prebuilt_voice_config=types.PrebuiltVoiceConfig(
+                            voice_name=voice_name
+                        )
+                    )
+                ),
+            ),
+        )
+
+        candidate = response.candidates[0] if response.candidates else None
+        if not candidate or not candidate.content or not candidate.content.parts:
+            print(f"  Gemini TTS returned empty response for voice={voice_name}")
+            return False
+        audio_data = candidate.content.parts[0].inline_data.data
+        if not audio_data:
+            return False
+
+        # Gemini TTS returns raw PCM (L16, 24kHz, mono).
+        # Trim to max_duration_ms — TTS often overshoots for short phrases.
+        bytes_per_ms = SAMPLE_RATE * (BIT_DEPTH // 8) * CHANNELS // 1000  # 48 bytes/ms
+        max_bytes = max_duration_ms * bytes_per_ms
+        if len(audio_data) > max_bytes:
+            # Fade out last 30ms to avoid click
+            fade_bytes = 30 * bytes_per_ms
+            audio_data = bytearray(audio_data[:max_bytes])
+            import array as _arr
+            fade_start = max_bytes - fade_bytes
+            samples = _arr.array("h", bytes(audio_data[fade_start:]))
+            fade_len = len(samples)
+            for i in range(fade_len):
+                samples[i] = int(samples[i] * (1.0 - i / fade_len))
+            audio_data[fade_start:] = samples.tobytes()
+            audio_data = bytes(audio_data)
+            print(f"  Trimmed TTS output to {max_duration_ms}ms (was {len(response.candidates[0].content.parts[0].inline_data.data) // bytes_per_ms}ms)")
+
+        write_pcm_to_wav(filepath, audio_data)
+        print(f"  Generated with Gemini TTS ({voice_name})")
+        return True
+
+    except ImportError:
+        print("  Gemini TTS skipped: google-genai not installed")
+        return False
+    except Exception as exc:
+        if filepath.exists():
+            filepath.unlink()
+        print(f"  Gemini TTS failed: {exc}")
+        return False
+
+
+def generate_tone_wav(filepath: Path, duration_ms: int, frequency: float) -> bool:
     try:
         num_samples = int(SAMPLE_RATE * duration_ms / 1000)
-
-        # Generate sine wave samples
+        fade = int(SAMPLE_RATE * 0.05)
         samples = []
         for i in range(num_samples):
-            # Sine wave with fade in/out envelope
-            t = i / SAMPLE_RATE
-            envelope = 1.0
-
-            # Fade in (first 50ms)
-            fade_samples = int(SAMPLE_RATE * 0.05)
-            if i < fade_samples:
-                envelope = i / fade_samples
-            # Fade out (last 50ms)
-            elif i > num_samples - fade_samples:
-                envelope = (num_samples - i) / fade_samples
-
-            # Generate sample with envelope
-            sample = int(32767 * 0.5 * envelope * math.sin(2 * math.pi * frequency * t))
-            samples.append(sample)
-
-        # Write WAV file
-        with wave.open(str(filepath), "wb") as wav_file:
-            wav_file.setnchannels(CHANNELS)
-            wav_file.setsampwidth(BIT_DEPTH // 8)  # 2 bytes for 16-bit
-            wav_file.setframerate(SAMPLE_RATE)
-
-            # Pack samples as signed 16-bit integers
-            packed_samples = struct.pack(f"<{len(samples)}h", *samples)
-            wav_file.writeframes(packed_samples)
-
+            env = 1.0
+            if i < fade:
+                env = i / fade
+            elif i > num_samples - fade:
+                env = (num_samples - i) / fade
+            samples.append(int(32767 * 0.5 * env * math.sin(
+                2 * math.pi * frequency * i / SAMPLE_RATE
+            )))
+        packed = struct.pack(f"<{len(samples)}h", *samples)
+        write_pcm_to_wav(filepath, packed)
         return True
-    except Exception as e:
-        print(f"  Error generating tone: {e}")
+    except Exception as exc:
+        print(f"  Tone generation failed: {exc}")
         return False
 
 
 def generate_silent_wav(filepath: Path, duration_ms: int) -> bool:
-    """
-    Generate a silent WAV file as a fallback placeholder.
-    """
     try:
         num_samples = int(SAMPLE_RATE * duration_ms / 1000)
-
-        with wave.open(str(filepath), "wb") as wav_file:
-            wav_file.setnchannels(CHANNELS)
-            wav_file.setsampwidth(BIT_DEPTH // 8)
-            wav_file.setframerate(SAMPLE_RATE)
-
-            # Silent samples (all zeros)
-            silent_samples = b"\x00" * (num_samples * (BIT_DEPTH // 8))
-            wav_file.writeframes(silent_samples)
-
+        write_pcm_to_wav(filepath, b"\x00" * num_samples * (BIT_DEPTH // 8))
         return True
-    except Exception as e:
-        print(f"  Error generating silent WAV: {e}")
+    except Exception as exc:
+        print(f"  Silent WAV failed: {exc}")
         return False
 
 
-def try_pyttsx3_generation(text: str, filepath: Path, duration_ms: int) -> bool:
-    """
-    Try to generate audio using pyttsx3 (offline TTS).
-    Returns True if successful, False otherwise.
-    """
-    try:
-        import pyttsx3
-        import tempfile
+# ---------------------------------------------------------------------------
+# Per-clip orchestration
+# ---------------------------------------------------------------------------
 
-        engine = pyttsx3.init()
-
-        # Configure voice properties
-        engine.setProperty("rate", 150)  # Slower for clearer filler sounds
-
-        # pyttsx3 saves to file directly
-        engine.save_to_file(text, str(filepath))
-        engine.runAndWait()
-
-        # Verify the file was created and is not empty
-        if filepath.exists():
-            if filepath.stat().st_size > 0 and verify_wav_specs(filepath):
-                print(f"  Generated with pyttsx3")
-                return True
-            else:
-                # Remove invalid/empty file
-                filepath.unlink()
-        return False
-    except ImportError:
-        return False
-    except Exception as e:
-        if filepath.exists():
-            filepath.unlink()
-        print(f"  pyttsx3 failed: {e}")
-        return False
-
-
-def try_gtts_generation(text: str, filepath: Path, duration_ms: int) -> bool:
-    """
-    Try to generate audio using gTTS (Google Text-to-Speech).
-    Requires internet connection.
-    Returns True if successful, False otherwise.
-    """
-    try:
-        from gtts import gTTS
-        import tempfile
-
-        # gTTS generates MP3, we need to convert to WAV
-        # This is complex without additional dependencies, so we skip if pydub not available
-        try:
-            from pydub import AudioSegment
-        except ImportError:
-            return False
-
-        # Generate MP3 to temp file
-        with tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as tmp:
-            tmp_path = tmp.name
-
-        tts = gTTS(text=text, lang="en")
-        tts.save(tmp_path)
-
-        # Convert to WAV with correct specs
-        audio = AudioSegment.from_mp3(tmp_path)
-        audio = audio.set_frame_rate(SAMPLE_RATE)
-        audio = audio.set_channels(CHANNELS)
-        audio = audio.set_sample_width(BIT_DEPTH // 8)
-
-        # Trim to target duration if needed
-        if len(audio) > duration_ms:
-            audio = audio[:duration_ms]
-
-        audio.export(str(filepath), format="wav")
-
-        # Clean up temp file
-        os.unlink(tmp_path)
-
-        print(f"  Generated with gTTS + pydub")
-        return True
-    except ImportError:
-        return False
-    except Exception as e:
-        print(f"  gTTS failed: {e}")
-        return False
-
-
-def generate_filler_audio(filename: str, text: str, duration_ms: int, tier_trigger: str) -> bool:
-    """
-    Generate a single filler audio file using the best available method.
-    """
+def generate_clip(voice_name: str, clip_name: str, force: bool = False) -> bool:
+    text, duration_ms = CLIP_CONFIGS[clip_name]
+    filename = f"{voice_name}_{clip_name}.wav"
     filepath = OUTPUT_DIR / filename
 
-    print(f"\nGenerating {filename} ({tier_trigger})...")
+    print(f"\n  {filename} ...")
 
-    # Check if file already exists
-    if filepath.exists():
-        print(f"  File already exists, verifying...")
+    if filepath.exists() and not force:
         if verify_wav_specs(filepath):
-            duration = get_wav_duration_ms(filepath)
-            print(f"  Skipping (valid file, {duration:.0f}ms)")
+            ms = get_wav_duration_ms(filepath)
+            print(f"  Skipping (valid, {ms:.0f}ms)")
             return True
-        else:
-            print(f"  Existing file does not meet specs, regenerating...")
+        print("  Existing file invalid — regenerating")
 
-    # Try TTS methods in order of preference
-    success = False
+    # 1. Gemini TTS (trim to target duration)
+    if try_gemini_tts(text, voice_name, filepath, max_duration_ms=duration_ms):
+        return True
 
-    # 1. Try pyttsx3 (offline TTS)
-    if not success:
-        success = try_pyttsx3_generation(text, filepath, duration_ms)
+    # 2. Tone placeholder
+    print("  Falling back to tone placeholder")
+    freq = _TONE_FREQ.get(clip_name, 220.0)
+    if generate_tone_wav(filepath, duration_ms, freq) and verify_wav_specs(filepath):
+        print(f"  Generated tone ({freq}Hz)")
+        return True
 
-    # 2. Try gTTS (requires internet + pydub)
-    if not success:
-        success = try_gtts_generation(text, filepath, duration_ms)
+    # 3. Silent placeholder
+    print("  Falling back to silent placeholder")
+    if generate_silent_wav(filepath, duration_ms):
+        print("  Generated silent placeholder")
+        return True
 
-    # 3. Generate tone placeholder using wave module
-    if not success:
-        print(f"  TTS not available, generating tone placeholder...")
-        # Use different frequencies for different fillers
-        freq_map = {
-            "hmm.wav": 180.0,      # Lower hum
-            "aah.wav": 220.0,      # Mid tone
-            "right_so.wav": 260.0, # Slightly higher
-            "interesting.wav": 300.0,
-            "cool_but.wav": 240.0,
-        }
-        frequency = freq_map.get(filename, 220.0)
-        success = generate_tone_wav(filepath, duration_ms, frequency)
-        if success:
-            print(f"  Generated tone placeholder ({frequency}Hz)")
-
-    # 4. Fallback: silent WAV placeholder
-    if not success:
-        print(f"  Tone generation failed, creating silent placeholder...")
-        success = generate_silent_wav(filepath, duration_ms)
-        if success:
-            print(f"  Generated silent placeholder")
-
-    # Verify final result
-    if success and filepath.exists():
-        duration = get_wav_duration_ms(filepath)
-        if duration:
-            print(f"  Created: {filepath}")
-            print(f"  Duration: {duration:.0f}ms")
-            verify_wav_specs(filepath)
-            return True
-
-    print(f"  FAILED to generate {filename}")
+    print(f"  FAILED: {filename}")
     return False
 
 
-def main():
-    """Main entry point for filler audio generation."""
-    print("=" * 60)
-    print("Willow Filler Audio Generator")
-    print("=" * 60)
-    print(f"\nOutput directory: {OUTPUT_DIR}")
-    print(f"Sample rate: {SAMPLE_RATE}Hz")
-    print(f"Bit depth: {BIT_DEPTH}-bit")
-    print(f"Channels: {'Mono' if CHANNELS == 1 else 'Stereo'}")
-    print(f"Target duration: 200-500ms per file")
+# ---------------------------------------------------------------------------
+# Main
+# ---------------------------------------------------------------------------
 
-    # Create output directory if it doesn't exist
+def main() -> int:
+    import argparse
+
+    parser = argparse.ArgumentParser(description="Generate Willow filler audio clips")
+    parser.add_argument("--force", action="store_true", help="Regenerate even if file exists")
+    parser.add_argument("--voice", help="Only generate clips for this voice (Leda/Kore/Zephyr)")
+    parser.add_argument("--clip", help="Only generate this clip name (hmm/aah/etc)")
+    args = parser.parse_args()
+
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-    print(f"\nOutput directory ready: {OUTPUT_DIR}")
+    print(f"Output: {OUTPUT_DIR}  |  {SAMPLE_RATE}Hz, {BIT_DEPTH}-bit, mono")
 
-    # Check available TTS engines
-    print("\nChecking available TTS engines...")
-    tts_available = []
+    voices = [args.voice] if args.voice else list(VOICE_FILLER_MAP.keys())
+    results: dict[str, bool] = {}
 
-    try:
-        import pyttsx3
-        tts_available.append("pyttsx3")
-    except ImportError:
-        pass
+    for voice in voices:
+        if voice not in VOICE_FILLER_MAP:
+            print(f"Unknown voice: {voice}. Valid: {list(VOICE_FILLER_MAP)}")
+            continue
+        clips = [args.clip] if args.clip else VOICE_FILLER_MAP[voice]
+        print(f"\n{'='*50}\n{voice}\n{'='*50}")
+        for clip in clips:
+            if clip not in CLIP_CONFIGS:
+                print(f"  Unknown clip: {clip}")
+                continue
+            key = f"{voice}_{clip}"
+            results[key] = generate_clip(voice, clip, force=args.force)
 
-    try:
-        from gtts import gTTS
-        from pydub import AudioSegment
-        tts_available.append("gTTS+pydub")
-    except ImportError:
-        pass
-
-    if tts_available:
-        print(f"  Available: {', '.join(tts_available)}")
-    else:
-        print("  No TTS engines available, will use tone placeholders")
-
-    # Generate all filler audio files
-    print("\n" + "-" * 60)
-    print("Generating filler audio files...")
-    print("-" * 60)
-
-    results = {}
-    for filename, (text, duration_ms, tier_trigger) in FILLER_CONFIGS.items():
-        success = generate_filler_audio(filename, text, duration_ms, tier_trigger)
-        results[filename] = success
-
-    # Summary
-    print("\n" + "=" * 60)
-    print("Summary")
-    print("=" * 60)
-
-    success_count = sum(1 for s in results.values() if s)
-    total_count = len(results)
-
-    for filename, success in results.items():
-        status = "OK" if success else "FAILED"
-        filepath = OUTPUT_DIR / filename
-        if success and filepath.exists():
-            duration = get_wav_duration_ms(filepath)
-            size = filepath.stat().st_size
-            print(f"  [{status}] {filename}: {duration:.0f}ms, {size} bytes")
+    print(f"\n{'='*50}")
+    ok = sum(1 for v in results.values() if v)
+    for key, success in results.items():
+        tag = "OK" if success else "FAIL"
+        fp = OUTPUT_DIR / f"{key}.wav"
+        if success and fp.exists():
+            ms = get_wav_duration_ms(fp)
+            print(f"  [{tag}] {key}.wav  {ms:.0f}ms  {fp.stat().st_size} bytes")
         else:
-            print(f"  [{status}] {filename}")
-
-    print(f"\nGenerated: {success_count}/{total_count} files")
-
-    if success_count == total_count:
-        print("\nAll filler audio files generated successfully!")
-        return 0
-    else:
-        print("\nSome files failed to generate. Check errors above.")
-        return 1
+            print(f"  [{tag}] {key}.wav")
+    print(f"\nGenerated: {ok}/{len(results)}")
+    return 0 if ok == len(results) else 1
 
 
 if __name__ == "__main__":

@@ -35,6 +35,11 @@ from .thought_signature import TacticType
 
 logger = logging.getLogger(__name__)
 
+# Semantic fallback timeout — must not blow the 500ms Tier 3 budget.
+# 800ms gives the embedding HTTPS call a reasonable window while still
+# leaving headroom for the keyword path to return first on fast turns.
+_MAX_EMBEDDING_LATENCY_SEC: Final[float] = 0.80  # seconds (asyncio.wait_for unit)
+
 # ---------------------------------------------------------------------------
 # Keyword sets for fast pattern matching
 # ---------------------------------------------------------------------------
@@ -141,7 +146,7 @@ class TacticDetector:
                 loop.run_in_executor(
                     None, self._embedding_service.find_similar_tactic, user_input, 1
                 ),
-                timeout=0.80,
+                timeout=_MAX_EMBEDDING_LATENCY_SEC,
             )
         except asyncio.TimeoutError:
             elapsed = (time.monotonic() - _t0) * 1000

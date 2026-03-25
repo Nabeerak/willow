@@ -37,6 +37,10 @@ VALID_TONES = frozenset({
     "formal",     # Professional, structured tone
     "sarcastic",  # Ironic or mocking tone
     "aggressive", # Confrontational, hostile tone
+    "distressed", # Overwhelmed, crying, breaking down
+    "joyful",     # Genuinely happy, excited, celebratory
+    "anxious",    # Nervous, worried, uncertain
+    "flat",       # Emotionally drained, monotone, disengaged
 })
 
 # Valid tactic classifications
@@ -73,7 +77,7 @@ VALID_TACTICS = frozenset({
 
 # Type aliases for clarity
 IntentType = Literal["collaborative", "neutral", "hostile", "devaluing", "insightful", "sincere_pivot"]
-ToneType = Literal["warm", "casual", "formal", "sarcastic", "aggressive"]
+ToneType = Literal["warm", "casual", "formal", "sarcastic", "aggressive", "distressed", "joyful", "anxious", "flat"]
 TacticType = Literal[
     "soothing", "mirroring", "gaslighting", "deflection", "contextual_sarcasm",
     "contextual_sarcasm_malice", "high_status_pressure", "love_bombing", "false_consensus",

@@ -17,6 +17,7 @@ Supported names: hmm, aah, right_so, interesting, cool_but.
 
 from __future__ import annotations
 
+import array
 import asyncio
 import logging
 import time
@@ -44,6 +45,16 @@ TRIGGER_FILLER_MAP: Final[dict[str, str]] = {
 
 # Latency threshold after which filler is queued (ms)
 FILLER_LATENCY_THRESHOLD_MS: Final[float] = 200.0
+
+# Gain multiplier applied to all filler clips at load time.
+# 0.85 = slightly quieter than Gemini's own audio output so fillers
+# sit beneath the conversation rather than jumping out. Previous 0.55
+# made Gemini TTS clips inaudible (especially Kore).
+_FILLER_GAIN: Final[float] = 0.85
+
+# Minimum seconds between filler plays. Prevents thrashing when every turn
+# triggers filler (e.g. sustained hostile conversation where Gemini is slow).
+_FILLER_COOLDOWN_S: Final[float] = 8.0
 
 
 # ---------------------------------------------------------------------------
@@ -87,6 +98,7 @@ class FillerAudioPlayer:
     _active_task: Optional[asyncio.Task] = field(default=None, init=False, repr=False)
     _websocket: Optional[object] = field(default=None, init=False, repr=False)
     _filler_active: asyncio.Event = field(default_factory=asyncio.Event, init=False, repr=False)
+    _last_play_time: float = field(default=0.0, init=False, repr=False)
 
     def set_websocket(self, websocket: Optional[object]) -> None:
         """
@@ -101,31 +113,49 @@ class FillerAudioPlayer:
         """
         Pre-load all WAV files from data_dir into memory.
 
-        Strips the WAV header and retains only the raw PCM payload.
-        Silently skips missing files so a partial audio set does not
-        crash the agent at startup.
+        Tries voice-prefixed filenames first (e.g. Leda_hmm.wav) then falls
+        back to unprefixed (hmm.wav) for backward compatibility. Strips the
+        WAV header and retains only the raw PCM payload. Silently skips
+        missing files so a partial audio set does not crash the agent at startup.
         """
-        clip_names = ["hmm", "aah", "right_so", "interesting", "cool_but"]
+        # Per-voice clip matrix: voice → clip names available for that voice
+        voice_clip_map: dict[str, list[str]] = {
+            "Leda": ["hmm", "aah", "right_so", "interesting", "cool_but"],
+            "Kore": ["hmm", "aah", "cool_but", "interesting", "right_so"],
+            "Zephyr": ["hmm", "aah", "cool_but", "interesting", "right_so"],
+        }
 
-        for name in clip_names:
-            wav_path = self.data_dir / f"{name}.wav"
-            if not wav_path.exists():
-                logger.debug("Filler clip not found, skipping: %s", wav_path)
-                continue
-            try:
-                with wave.open(str(wav_path), "rb") as wf:
-                    raw_pcm = wf.readframes(wf.getnframes())
-                self._clips[name] = raw_pcm
-                logger.debug(
-                    "Loaded filler clip '%s': %d bytes PCM",
-                    name, len(raw_pcm),
-                )
-            except Exception as exc:
-                logger.warning("Failed to load filler clip '%s': %s", name, exc)
+        loaded = 0
+        for voice, clip_names in voice_clip_map.items():
+            for name in clip_names:
+                key = f"{voice}_{name}"
+                # Prefer voice-prefixed file; fall back to unprefixed (Leda default).
+                prefixed_path = self.data_dir / f"{key}.wav"
+                fallback_path = self.data_dir / f"{name}.wav"
+                wav_path = prefixed_path if prefixed_path.exists() else fallback_path
+                if not wav_path.exists():
+                    logger.debug("Filler clip not found, skipping: %s", prefixed_path)
+                    continue
+                try:
+                    with wave.open(str(wav_path), "rb") as wf:
+                        raw_pcm = wf.readframes(wf.getnframes())
+                    samples = array.array("h", raw_pcm)
+                    for i in range(len(samples)):
+                        samples[i] = int(samples[i] * _FILLER_GAIN)
+                    raw_pcm = samples.tobytes()
+                    self._clips[key] = raw_pcm
+                    loaded += 1
+                    logger.debug(
+                        "Loaded filler clip '%s' from %s: %d bytes PCM (gain=%.2f)",
+                        key, wav_path.name, len(raw_pcm), _FILLER_GAIN,
+                    )
+                except Exception as exc:
+                    logger.warning("Failed to load filler clip '%s': %s", key, exc)
 
+        total = sum(len(v) for v in voice_clip_map.values())
         logger.info(
             "FillerAudioPlayer loaded %d/%d clips from %s",
-            len(self._clips), len(clip_names), self.data_dir,
+            loaded, total, self.data_dir,
         )
 
     def clip_for_trigger(self, trigger_type: str) -> str:
@@ -143,24 +173,38 @@ class FillerAudioPlayer:
         """
         return TRIGGER_FILLER_MAP.get(trigger_type, "hmm")
 
-    async def play(self, clip_name: str) -> bool:
+    async def play(self, clip_name: str, voice_name: str = "Leda") -> bool:
         """
-        Play a filler clip asynchronously.
+        Play a filler clip asynchronously, matched to the current voice.
 
-        Starts playback as an asyncio.Task stored in _active_task.
-        Callers can cancel via cancel(). In the real audio pipeline,
-        this method would stream raw_pcm bytes to the audio output device
-        or Gemini Live output channel. Here it simulates playback duration
-        via asyncio.sleep based on PCM byte count at 16kHz/16-bit/mono.
+        Looks up the voice-prefixed key first (e.g. "Kore_hmm"). Falls back
+        to the Leda variant ("Leda_hmm") if the voice has no clip for this
+        trigger, and finally to the unprefixed key ("hmm") for legacy compat.
 
         Args:
             clip_name: Name of the clip to play (e.g. "hmm").
+            voice_name: Active voice ("Leda", "Kore", or "Zephyr").
 
         Returns:
             True if clip started, False if clip not loaded.
         """
-        logger.info(f"FILLER PLAYING: clip={clip_name}")
-        raw_pcm = self._clips.get(clip_name)
+        # Cooldown: suppress filler if one played recently
+        now = time.perf_counter()
+        elapsed_since_last = now - self._last_play_time
+        if elapsed_since_last < _FILLER_COOLDOWN_S:
+            logger.debug(
+                "Filler cooldown: %.1fs since last play (need %.1fs) — skipping %s",
+                elapsed_since_last, _FILLER_COOLDOWN_S, clip_name,
+            )
+            return False
+
+        key = f"{voice_name}_{clip_name}"
+        raw_pcm = (
+            self._clips.get(key)
+            or self._clips.get(f"Leda_{clip_name}")
+            or self._clips.get(clip_name)  # legacy unprefixed fallback
+        )
+        logger.info("FILLER PLAYING: clip=%s voice=%s key=%s", clip_name, voice_name, key)
         if raw_pcm is None:
             logger.debug("Filler clip '%s' not loaded — skipping playback", clip_name)
             return False
@@ -168,6 +212,11 @@ class FillerAudioPlayer:
         # Cancel any in-progress filler before starting a new one
         self.cancel()
 
+        # Set active flag synchronously before spawning task so that
+        # is_playing returns True immediately — prevents the double-trigger
+        # race where a second play() fires before the task starts.
+        self._filler_active.set()
+        self._last_play_time = time.perf_counter()
         self._active_task = asyncio.create_task(
             self._play_clip(clip_name, raw_pcm),
             name=f"filler:{clip_name}",
@@ -203,15 +252,12 @@ class FillerAudioPlayer:
 
     async def _play_clip(self, clip_name: str, raw_pcm: bytes) -> None:
         """
-        Send PCM bytes to the client WebSocket in small chunks (FR-010, T048).
+        Send PCM bytes to the client WebSocket in 100ms chunks (FR-010, T048).
 
-        Sends the clip in 20ms chunks — the same path Gemini audio chunks use. 
-        The browser's AudioWorklet receives the bytes, decodes them as 
-        16kHz/16-bit/mono PCM, and plays them immediately.
-
-        Streaming in chunks allows cancellation (barge-in or real Gemini audio
-        starting) to actually stop the network transfer and browser playback,
-        preventing audio overlap.
+        Sends in 4800-byte chunks (100ms of 24kHz PCM) — large enough to avoid
+        asyncio timer imprecision stuttering (was 20ms/960 bytes), small enough
+        that each chunk doesn't push the browser's #nextPlayTime far ahead and
+        delay subsequent Gemini audio.
         """
         # 24kHz * 2 bytes/sample * 1 channel = 48000 bytes per second
         duration_s = len(raw_pcm) / 48_000
@@ -220,15 +266,20 @@ class FillerAudioPlayer:
             clip_name, duration_s * 1000,
         )
         start = time.perf_counter()
-        self._filler_active.set()
 
-        chunk_size = 960   # 20ms of PCM data (48000 bytes/s * 0.020)
-        sleep_duration = 0.020
-        
+        chunk_size = 4800   # 100ms of PCM (48000 bytes/s * 0.100)
+        sleep_duration = 0.050  # Send at 2x real-time so browser stays buffered ahead
+        num_chunks = (len(raw_pcm) + chunk_size - 1) // chunk_size
+
         try:
             ws = self._websocket
+            logger.info(
+                "Filler _play_clip: clip=%s pcm=%d bytes, chunks=%d, ws=%s",
+                clip_name, len(raw_pcm), num_chunks,
+                type(ws).__name__ if ws else "None",
+            )
             for i in range(0, len(raw_pcm), chunk_size):
-                chunk = raw_pcm[i:i+chunk_size]
+                chunk = raw_pcm[i:i + chunk_size]
                 if ws is not None:
                     try:
                         if hasattr(ws, 'send_bytes'):
@@ -236,15 +287,16 @@ class FillerAudioPlayer:
                         else:
                             await ws.send(chunk)         # websockets library
                     except Exception as exc:
-                        logger.debug("Filler WebSocket send failed: %s", exc)
+                        logger.warning("Filler WebSocket send failed: %s", exc)
                         break
-                
-                # Check cancellation between chunks
+
+                # Yield between chunks — allows cancellation and prevents
+                # pushing #nextPlayTime too far ahead on the browser side
                 await asyncio.sleep(sleep_duration)
             
             elapsed = (time.perf_counter() - start) * 1000
-            logger.debug(
-                "Filler playback completed naturally: clip='%s' elapsed=%.0fms",
+            logger.info(
+                "Filler playback completed: clip='%s' elapsed=%.0fms",
                 clip_name, elapsed,
             )
             

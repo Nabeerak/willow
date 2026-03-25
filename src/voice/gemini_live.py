@@ -16,9 +16,10 @@ import base64
 import json
 import logging
 import struct
+import time
 import uuid
 from contextlib import AsyncExitStack
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta, timezone
 from enum import Enum
 from typing import Awaitable, Callable
@@ -37,11 +38,12 @@ AUDIO_BITS_PER_SAMPLE = 16
 AUDIO_CHANNELS = 1
 
 # Zone → voice mapping.  Default (neutral_m) is Leda.
-# Voice can be updated mid-session via a setup message without reconnecting.
+# Voice changes require a full reconnect (Gemini Live API does not support
+# mid-session config updates). Use apply_pending_voice_switch() after a turn.
 ZONE_VOICE_MAP: dict[str, str] = {
     "high_m": "Zephyr",
     "neutral_m": "Leda",
-    "low_m": "Aoede",
+    "low_m": "Kore",
 }
 
 
@@ -284,7 +286,7 @@ class StreamingSession:
         # Reconnect context callback — called after reconnect to inject
         # compact state summary instead of losing all conversational context.
         # Set by the orchestrator (WillowAgent) to provide last-3-turns + state.
-        self._reconnect_context_callback: Callable[[], Awaitable[str | None]] | None = None
+        self._reconnect_context_callback: Callable[[int], Awaitable[str | None]] | None = None
 
         # Asyncio primitives
         self._receive_task: asyncio.Task | None = None
@@ -292,8 +294,20 @@ class StreamingSession:
         self._stream_lock: asyncio.Lock = asyncio.Lock()
         self._shutdown_event: asyncio.Event = asyncio.Event()
 
-        # Voice zone tracking — default neutral_m / Leda
+        # Voice zone tracking. Initialized to "neutral_m" because the config
+        # default voice is Leda (neutral_m) — no reconnect needed for the
+        # first turn if session starts in neutral_m.
         self._last_voice_zone: str = "neutral_m"
+
+        # Pending voice zone queued by switch_voice_for_zone(). Applied after
+        # Gemini finishes speaking via apply_pending_voice_switch(), which
+        # reconnects with the new voice in the natural conversational pause.
+        self._pending_voice_zone: str | None = None
+        # Consecutive turns the same pending zone has been observed. Switch only
+        # fires when this reaches >= 2 (FIX 2 — stability check).
+        self._pending_voice_zone_count: int = 0
+        # FIX 5: Track last turn_complete time to prevent reconnects too soon after
+        self._last_turn_complete_time: float = 0.0
 
     @property
     def state(self) -> SessionState:
@@ -349,45 +363,67 @@ class StreamingSession:
 
     async def switch_voice_for_zone(self, zone: str) -> bool:
         """
-        Send a mid-session voice switch when the behavioral zone changes.
+        Request a voice zone change. Requires 2 consecutive calls with the
+        same zone before the switch fires (stability check).
 
-        Sends a setup message to the live session to update the voice without
-        requiring a full reconnect.  No-ops when zone has not changed.
+        Returns True only when count reaches 2 and the reconnect succeeds
+        (voice confirmed). Returns False when deferred (count < 2) or when
+        the voice is already correct. The caller should NOT update its own
+        zone tracker until this returns True.
 
         Args:
             zone: One of "high_m", "neutral_m", "low_m".
 
         Returns:
-            True if a voice switch was sent, False if zone unchanged or session
-            is not connected.
+            True if voice switch was applied, False if deferred or unchanged.
         """
-        if zone == self._last_voice_zone:
-            return False
         new_voice = ZONE_VOICE_MAP.get(zone, "Leda")
-        if not self._live_session:
-            logger.warning("[VOICE] switch_voice_for_zone: no live session — skipping")
+        current_voice = ZONE_VOICE_MAP.get(self._last_voice_zone, "Leda")
+        if new_voice == current_voice:
+            # Zone resolved back to current voice — cancel any pending switch.
+            self._pending_voice_zone = None
+            self._pending_voice_zone_count = 0
             return False
-        try:
-            await self._live_session.send(
-                input={
-                    "setup": {
-                        "voice_config": {
-                            "prebuilt_voice_config": {
-                                "voice_name": new_voice
-                            }
-                        }
-                    }
-                }
-            )
+        if self._pending_voice_zone == zone:
+            # Same zone queued again — increment stability counter.
+            self._pending_voice_zone_count += 1
+        else:
+            # New zone — start fresh stability count.
+            self._pending_voice_zone = zone
+            self._pending_voice_zone_count = 1
+
+        if self._pending_voice_zone_count < 2:
             logger.info(
-                "[VOICE] Zone %s → %s: switched voice to %s",
-                self._last_voice_zone, zone, new_voice,
+                "[VOICE] queued zone=%s voice=%s count=%d/2 — waiting for stability",
+                zone, new_voice, self._pending_voice_zone_count,
             )
-            self._last_voice_zone = zone
-            return True
-        except Exception as exc:
-            logger.warning("[VOICE] Voice switch failed (zone=%s voice=%s): %s", zone, new_voice, exc)
             return False
+
+        # Stable — apply the switch now.
+        self._pending_voice_zone = None
+        self._pending_voice_zone_count = 0
+
+        logger.info("[VOICE] applying switch: zone=%s voice=%s (reconnecting)", zone, new_voice)
+
+        self._gemini_config = replace(self._gemini_config, voice_name=new_voice)
+        self._last_voice_zone = zone
+
+        success = await self._reconnect_session(reason="voice_zone_switch", base_delay=0.0)
+        if success:
+            logger.info("[VOICE] voice switch complete: zone=%s voice=%s", zone, new_voice)
+        else:
+            logger.warning("[VOICE] voice switch reconnect failed — keeping previous voice")
+        return success
+
+    async def apply_pending_voice_switch(self) -> bool:
+        """Legacy hook called from _on_gemini_turn_complete. No-op now —
+        stability check and reconnect are handled inline by switch_voice_for_zone()."""
+        return False
+
+    @property
+    def current_voice(self) -> str:
+        """Return the active voice name for the current zone (e.g. 'Leda', 'Kore', 'Zephyr')."""
+        return ZONE_VOICE_MAP.get(self._last_voice_zone, "Leda")
 
     async def connect(self) -> None:
         """
@@ -574,6 +610,12 @@ class StreamingSession:
             return
 
         async with self._stream_lock:
+            # Re-check after acquiring lock — a reconnect may have swapped the
+            # session while we were waiting. Use the current reference, not the
+            # stale one captured before the lock.
+            live_session = self._live_session
+            if not live_session or self._state == SessionState.CONNECTING:
+                return
             self._state = SessionState.STREAMING
 
             try:
@@ -584,20 +626,6 @@ class StreamingSession:
                         activity_start=genai_types.ActivityStart()
                     )
                     self._activity_started = True
-
-                if audio_data:
-                    samples = struct.unpack(f"<{len(audio_data)//2}h", audio_data)
-                    zero_crossings = 0
-                    for i in range(1, len(samples)):
-                        if (samples[i-1] >= 0 and samples[i] < 0) or (samples[i-1] < 0 and samples[i] >= 0):
-                            zero_crossings += 1
-
-                    duration_seconds = len(audio_data) / (AUDIO_SAMPLE_RATE_HZ * 2)
-                    if duration_seconds > 0:
-                        pitch = (zero_crossings / 2.0) / duration_seconds
-                        if pitch > 0:
-                            self._user_pitch_sum += pitch
-                            self._user_pitch_count += 1
 
                 # Send audio data as realtime input
                 await live_session.send_realtime_input(
@@ -731,7 +759,10 @@ class StreamingSession:
         if self._live_session:
             try:
                 await self._live_session.send_client_content(
-                    turns=[],
+                    turns=genai_types.Content(
+                        role="user",
+                        parts=[genai_types.Part(text="")],
+                    ),
                     turn_complete=True,
                 )
                 logger.debug(
@@ -860,6 +891,16 @@ class StreamingSession:
                         raise
                     
                     logger.warning(f"[STREAM] Session {self.session_id} loop encountered error: {e}")
+                    # If a voice_zone_switch reconnect is already in progress
+                    # (state == CONNECTING), the WS close that triggered this
+                    # error is expected — skip the redundant error reconnect.
+                    if self._state == SessionState.CONNECTING:
+                        logger.info("[STREAM] Skipping error reconnect — voice switch reconnect in progress")
+                        # Wait for the reconnect to finish before re-entering receive()
+                        # to avoid a tight loop on the closed WS.
+                        while self._state == SessionState.CONNECTING and not self._shutdown_event.is_set():
+                            await asyncio.sleep(0.1)
+                        continue
                     if not await self._reconnect_session():
                         logger.error(f"[STREAM] Session {self.session_id} reconnection failed permanently")
                         self._state = SessionState.ERROR
@@ -872,27 +913,46 @@ class StreamingSession:
             logger.error(f"[STREAM] Session {self.session_id} loop crashed: {e}")
             self._state = SessionState.ERROR
 
-    async def _reconnect_session(self) -> bool:
+    async def _reconnect_session(
+        self,
+        *,
+        reason: str = "connection_error",
+        base_delay: float = 1.0,
+    ) -> bool:
         """
         Attempt to re-establish the Gemini Live connection with exponential backoff.
-        
+
+        Args:
+            reason: Why we're reconnecting. "voice_zone_switch" skips the
+                    _last_voice_zone reset (it was already set by the caller).
+            base_delay: Initial delay in seconds. Pass 0.0 for intentional
+                        reconnects (voice switch) so the reconnect is instant.
+
         Returns:
             True if reconnection succeeded, False otherwise.
         """
         if not self._client or self._shutdown_event.is_set():
             return False
 
-        max_retries = 5
-        base_delay = 1.0
-        
+        if reason == "voice_zone_switch":
+            max_retries = 1
+            base_delay = 0.0
+            context_turns = 2
+        elif reason == "connection_error":
+            max_retries = 5
+            context_turns = 3
+        else:
+            max_retries = 3
+            context_turns = 3
+
         self._state = SessionState.CONNECTING
-        
+
         for attempt in range(max_retries):
             if self._shutdown_event.is_set():
                 return False
-                
+
             delay = base_delay * (2 ** attempt)
-            logger.info(f"[STREAM] Reconnecting session {self.session_id} (attempt {attempt+1}/{max_retries}) in {delay:.1f}s...")
+            logger.info(f"[STREAM] Reconnecting session {self.session_id} (reason={reason}, attempt {attempt+1}/{max_retries}) in {delay:.1f}s...")
             await asyncio.sleep(delay)
             
             try:
@@ -953,13 +1013,24 @@ class StreamingSession:
                     self._turn_was_interrupted = False
                     self._activity_started = False
 
-                logger.info(f"[STREAM] Session {self.session_id} reconnected successfully")
+                logger.info(f"[STREAM] Session {self.session_id} reconnected successfully (reason={reason})")
+
+                if reason == "voice_zone_switch":
+                    # Zone and config were already updated by apply_pending_voice_switch()
+                    # before this call. The new session already has the correct voice —
+                    # keep _last_voice_zone as-is so the next turn doesn't re-queue.
+                    pass
+                else:
+                    # Error recovery reconnect: new session restores the config default
+                    # voice. Reset zone tracker so the next switch_voice_for_zone call
+                    # re-queues regardless of what zone was active before.
+                    self._last_voice_zone = ""
 
                 # 4. Inject compact reconnect context (last 3 turns + state)
                 # instead of leaving Gemini with zero conversational memory.
                 if self._reconnect_context_callback:
                     try:
-                        context = await self._reconnect_context_callback()
+                        context = await self._reconnect_context_callback(context_turns)
                         if context:
                             await self._live_session.send_client_content(
                                 turns=genai_types.Content(
@@ -1087,6 +1158,7 @@ class StreamingSession:
         """
         async with self._turn_lock:
             self._turn_complete_fired = True
+            self._last_turn_complete_time = time.time()
 
             # Mark final chunk
             if self._on_audio_chunk:

@@ -44,18 +44,103 @@ def _load_persona() -> dict:
 
 MRange = Literal["high_m", "neutral_m", "low_m"]
 
-# m-value thresholds — match Tier 1 Reflex
-M_HIGH_THRESHOLD: Final[float] = 0.5
-M_LOW_THRESHOLD: Final[float] = -0.5
+# m-value thresholds with hysteresis — asymmetric enter/exit prevents
+# zone flapping on brief m spikes. Harder to enter a zone than to stay in it.
+M_HIGH_THRESHOLD: Final[float] = 0.7   # legacy alias (entry)
+M_LOW_THRESHOLD: Final[float] = -0.7   # legacy alias (entry)
+M_HIGH_ENTER: Final[float] = 0.7
+M_HIGH_EXIT: Final[float] = 0.3
+M_LOW_ENTER: Final[float] = -0.7
+M_LOW_EXIT: Final[float] = -0.3
 
 
-def get_m_range(current_m: float) -> MRange:
-    """Classify current_m into one of three behavioral zones."""
-    if current_m > M_HIGH_THRESHOLD:
-        return "high_m"
-    elif current_m < M_LOW_THRESHOLD:
-        return "low_m"
-    return "neutral_m"
+def get_m_range(current_m: float, current_zone: MRange = "neutral_m") -> MRange:
+    """Classify current_m into a behavioral zone with hysteresis.
+
+    Uses asymmetric thresholds: entering a zone requires a stronger signal
+    than staying in it. This prevents rapid zone flapping when m oscillates
+    near a boundary.
+    """
+    if current_zone == "high_m":
+        if current_m >= M_HIGH_EXIT:
+            return "high_m"
+        elif current_m <= M_LOW_ENTER:
+            return "low_m"
+        else:
+            return "neutral_m"
+    elif current_zone == "low_m":
+        if current_m <= M_LOW_EXIT:
+            return "low_m"
+        elif current_m >= M_HIGH_ENTER:
+            return "high_m"
+        else:
+            return "neutral_m"
+    else:
+        if current_m >= M_HIGH_ENTER:
+            return "high_m"
+        elif current_m <= M_LOW_ENTER:
+            return "low_m"
+        else:
+            return "neutral_m"
+
+
+# ---------------------------------------------------------------------------
+# Compact zone registers — ~20 tokens each, injected on zone change (Layer 2).
+# Replaces full ~130-token system_directive for per-turn injection.
+# ---------------------------------------------------------------------------
+
+ZONE_REGISTER_COMPACT: Final[dict[str, str]] = {
+    "high_m": (
+        "MODE: Intellectual Peer. Up to 4 sentences. Engaged, warm, curious. "
+        "Analogies from architecture/physics/systems. React before answering. Be present."
+    ),
+    "neutral_m": (
+        "MODE: Standard. 2-3 sentences. Clear, direct, professional warmth. "
+        "No analogies. No wit. Hold ground."
+    ),
+    "low_m": (
+        "MODE: Dignity Floor. 20 words max. Formal. Short sentences. "
+        "Slightly cutting. Cold precision. Say it once."
+    ),
+}
+
+# ---------------------------------------------------------------------------
+# Vocal delivery — paid once at session start (Layer 1). Not re-injected.
+# ---------------------------------------------------------------------------
+
+VOCAL_DELIVERY_GLOBAL: Final[str] = (
+    "[VOCAL DELIVERY — ALL MODES]\n"
+    "High engagement: Speak fluidly with intellectual curiosity. "
+    "Natural range, no pitch raises for emphasis. "
+    "Ground warmth in logic. Em-dashes for pivots. Ban exclamation points.\n"
+    "Standard: Clear, professional, balanced. Flat even pitch. "
+    "No emotional inflection. Direct, zero hedging.\n"
+    "Dignity Floor: Significantly slower and softer. "
+    "Flat absolute affect. Pause between sentences. "
+    "Zero aggression — cold precision. Full stops only. "
+    "Ban exclamation points. Ban commas."
+)
+
+# ---------------------------------------------------------------------------
+# Opener directives — LLM picks its own opener from these guidelines.
+# Falls back to pool-based openers if directive generation is not available.
+# ---------------------------------------------------------------------------
+
+OPENER_DIRECTIVES: Final[dict[str, str]] = {
+    "high_m": (
+        "Open with genuine intellectual engagement — a reaction to what they said, "
+        "not a stock phrase. Something like noticing an interesting angle, "
+        "expressing curiosity, or building on their point."
+    ),
+    "neutral_m": (
+        "Open clean and direct. No warmth, no edge. "
+        "A clear signal that you're about to answer the question."
+    ),
+    "low_m": (
+        "Open with precision. One short declarative. "
+        "The kind of opening that makes it clear you're done being patient."
+    ),
+}
 
 
 def _cycle_index(seed: str, pool_size: int) -> int:
@@ -82,6 +167,11 @@ _OPENERS_FALLBACK: Final[dict[str, list[str]]] = {
         "Right, so —",
         "Interesting angle. Here's the thing:",
         "Fair point. And it connects to something else:",
+        "Oh that's interesting —",
+        "Right, and here's the thing —",
+        "Actually yes —",
+        "That tracks, and —",
+        "Okay I like this question —",
     ],
     "neutral_m": [
         "Here's the direct answer:",
@@ -94,6 +184,10 @@ _OPENERS_FALLBACK: Final[dict[str, list[str]]] = {
         "Here's what I'll say.",
         "Simply:",
         "One thing:",
+        "Let's be honest here —",
+        "That's not quite right.",
+        "I'll say this once —",
+        "You already know the answer.",
     ],
 }
 
@@ -190,54 +284,21 @@ def get_response_style(
             max_sentences=4,
             use_analogy=eligible_for_analogy,
             opener=opener,
-            system_directive=(
-                "CURRENT MODE: Intellectual Peer. "
-                "The conversation has momentum. You are engaged and it shows. "
-                "Use analogies from architecture, physics, or systems — they should clarify, not decorate. "
-                "You may take up to 4 sentences. Riff a little. Show genuine curiosity. "
-                "React before you answer — a brief 'Interesting.' or 'Hm.' when something lands. "
-                "This is the version of you people remember. Be present. "
-                "[VOCAL DELIVERY: Speak fluidly and with intellectual curiosity. "
-                "Maintain your natural range but do not raise your pitch for emphasis. "
-                "Ground your warmth in logic. Use em-dashes for natural pivots. "
-                "Ban exclamation points.]"
-            ),
+            system_directive=ZONE_REGISTER_COMPACT["high_m"],
         )
     elif m_range == "neutral_m":
         return ResponseStyle(
             max_sentences=3,
             use_analogy=False,
             opener=opener,
-            system_directive=(
-                "CURRENT MODE: Standard. "
-                "2-3 sentences. Clear and direct. "
-                "Professional warmth — present but not expressive. "
-                "No analogies unless genuinely necessary. No wit. "
-                "Hold your ground. Don't push. "
-                "[VOCAL DELIVERY: Clear, professional, balanced. Flat even pitch. "
-                "No emotional inflection. Direct delivery with zero hedging.]"
-            ),
+            system_directive=ZONE_REGISTER_COMPACT["neutral_m"],
         )
     else:  # low_m
         return ResponseStyle(
             max_sentences=1,
             use_analogy=False,
             opener=opener,
-            system_directive=(
-                "CURRENT MODE: Dignity Floor. "
-                "HARD LIMIT: 20 words maximum. No exceptions. "
-                "1-2 sentences. Language is formal. Sentences are short. "
-                "You are pulling back. This must be felt in the register, not just the length. "
-                "Do not elaborate. Do not soften. Do not use analogies or wit. "
-                "If the premise is flawed, say so once and stop. "
-                "The person across from you needs to change their approach — not their words. Their approach. "
-                "Example register: 'I understand the question. The premise is flawed and I'm not going to defend a contradiction.' "
-                "No more than that. Do not omit safety-critical information. "
-                "[VOCAL DELIVERY: Speak significantly slower and softer than normal. "
-                "Flat absolute affect. Pause between each sentence. "
-                "Zero aggression — only cold precision. Full stops only. "
-                "Ban exclamation points. Ban commas.]"
-            ),
+            system_directive=ZONE_REGISTER_COMPACT["low_m"],
         )
 
 

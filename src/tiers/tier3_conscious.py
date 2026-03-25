@@ -79,6 +79,10 @@ def _load_tone_signals() -> dict[str, list[str]]:
         "sarcastic": ["oh really", "sure", "yeah right", "obviously"],
         "warm": ["thank", "love", "appreciate", "amazing", "wonderful"],
         "casual": ["hey", "hi", "lol", "haha", "cool", "awesome", "yeah"],
+        "distressed": ["i can't do this", "i'm breaking", "help me", "i'm overwhelmed", "i'm losing it"],
+        "joyful": ["i'm so happy", "this is amazing", "best day ever", "i'm so excited", "i did it"],
+        "anxious": ["i'm worried", "what if", "i'm nervous", "i'm afraid", "i'm panicking"],
+        "flat": ["whatever", "i don't care", "doesn't matter", "nothing matters", "i'm numb"],
     }
     try:
         with open(persona_path, "r", encoding="utf-8") as f:
@@ -224,15 +228,24 @@ class Tier3Conscious:
         signals = _load_tone_signals()
 
         # Step 1: Text-based heuristics
+        # Priority: distressed > aggressive > anxious > sarcastic > joyful > warm > flat > casual
         text_tone: ToneType = "formal"
-        if any(w in input_lower for w in signals.get("aggressive", [])):
+        if any(w in input_lower for w in signals.get("distressed", [])):
+            text_tone = "distressed"
+        elif any(w in input_lower for w in signals.get("aggressive", [])):
             text_tone = "aggressive"
         elif re.search(r"[?!]{2,}", user_input) or _is_shouting(user_input):
             text_tone = "aggressive"
+        elif any(w in input_lower for w in signals.get("anxious", [])):
+            text_tone = "anxious"
         elif any(w in input_lower for w in signals.get("sarcastic", [])):
             text_tone = "sarcastic"
+        elif any(w in input_lower for w in signals.get("joyful", [])):
+            text_tone = "joyful"
         elif any(w in input_lower for w in signals.get("warm", [])):
             text_tone = "warm"
+        elif any(w in input_lower for w in signals.get("flat", [])):
+            text_tone = "flat"
         elif any(w in input_lower for w in signals.get("casual", [])):
             text_tone = "casual"
 
@@ -265,7 +278,7 @@ class Tier3Conscious:
             if tactic.tactic in tactics_rules:
                 rule = tactics_rules[tactic.tactic]
                 register = rule.get("register", "")
-                note = rule.get("behavioral_note", "")
+                note = rule.get("directive", rule.get("behavioral_note", ""))
                 if register or note:
                     tactic_str += f" | register={register}, note={note}"
                     
@@ -363,7 +376,7 @@ class Tier3Conscious:
         # Step 4: Merge [THOUGHT] tag override if provided
         intent, tone = self._merge_thought_tag(intent, tone, thought_tag_data)
 
-        # Step 4b: Look up behavioral note from willow_rules.json (Fix 1)
+        # Step 4b: Look up behavioral directive from willow_rules.json
         behavioral_note: Optional[str] = None
         resolved_tactic_key: Optional[str] = None
         if tactic_result.tactic:
@@ -375,13 +388,38 @@ class Tier3Conscious:
             if not rule_entry:
                 # Fall back to situations section (e.g. sincere_pivot, casual_invite)
                 rule_entry = rules.get("situations", {}).get(tactic_key, {})
-            if rule_entry.get("behavioral_note"):
-                behavioral_note = rule_entry["behavioral_note"]
+            # Prefer structured directive; fall back to legacy behavioral_note
+            _directive = rule_entry.get("directive") or rule_entry.get("behavioral_note")
+            if _directive:
+                behavioral_note = _directive
                 resolved_tactic_key = tactic_key
                 logger.debug(
-                    "Behavioral note from rules: tactic=%s note=%r",
-                    tactic_key, behavioral_note,
+                    "Behavioral directive from rules: tactic=%s directive=%r",
+                    tactic_key, _directive[:80],
                 )
+
+        # If no tactic directive, check emotional tone
+        if not behavioral_note and tone in (
+            "distressed", "joyful", "anxious", "flat",
+        ):
+            tone_situation_map = {
+                "distressed": "someone_distressed",
+                "joyful": "someone_joyful",
+                "anxious": "someone_anxious",
+                "flat": "someone_flat",
+            }
+            situation_key = tone_situation_map.get(tone)
+            if situation_key:
+                _rules = _load_rules()
+                situation = _rules.get("situations", {}).get(situation_key, {})
+                _directive = situation.get("directive") or situation.get("behavioral_note")
+                if _directive:
+                    behavioral_note = _directive
+                    resolved_tactic_key = situation_key
+                    logger.info(
+                        "[T3] emotional tone '%s' → behavioral directive injected",
+                        tone,
+                    )
 
         # Step 5: Build ThoughtSignature
         m_modifiers = _load_m_modifiers()
@@ -431,7 +469,12 @@ class Tier3Conscious:
         from datetime import datetime as _dt
         tier_trigger_record: Optional[TierTrigger] = None
         if latency_ms >= FILLER_LATENCY_THRESHOLD_MS:
-            trigger_type = "truth_conflict" if is_sovereign_spike else "manipulation_pattern"
+            if is_sovereign_spike:
+                trigger_type = "truth_conflict"
+            elif tactic_result.tactic == "sincere_pivot":
+                trigger_type = "sincere_pivot"
+            else:
+                trigger_type = "manipulation_pattern"
             tier_trigger_record = TierTrigger(
                 trigger_type=trigger_type,
                 tier_fired=3,

@@ -39,8 +39,8 @@ from ..persona.warm_sharp import select_opener, apply_behavioral_tells, get_m_ra
 TIER1_LATENCY_BUDGET_MS: float = 50.0
 
 # M-value thresholds for tone adjustment
-M_HIGH_THRESHOLD: float = 0.5
-M_LOW_THRESHOLD: float = -0.5
+M_HIGH_THRESHOLD: float = 0.7
+M_LOW_THRESHOLD: float = -0.7
 
 # Tone indicator patterns (simple heuristics for fast processing)
 # These are lightweight regex patterns for <50ms compliance
@@ -61,7 +61,7 @@ TONE_PATTERNS: dict[str, list[re.Pattern[str]]] = {
         re.compile(r"\b(I would like to|I am writing to|I wish to)\b", re.IGNORECASE),
     ],
     "sarcastic": [
-        re.compile(r"\b(oh really|sure|right|obviously|clearly|wow|brilliant|genius)\b", re.IGNORECASE),
+        re.compile(r"\b(oh really|sure|obviously|clearly|wow|brilliant|genius)\b", re.IGNORECASE),
         re.compile(r'"[^"]+"\s*(?:huh|right|\?)', re.IGNORECASE),  # Quoted with questioning
         re.compile(r"\b(as if|yeah right)\b", re.IGNORECASE),
     ],
@@ -77,7 +77,7 @@ TONE_PATTERNS: dict[str, list[re.Pattern[str]]] = {
 # Format: {tone: {m_range: [prefix_options]}}
 TONE_PREFIXES: dict[str, dict[str, list[str]]] = {
     "warm": {
-        "high_m": ["Absolutely! ", "Of course! ", "Great question! ", "I love that! "],
+        "high_m": ["That's worth thinking about. ", "Right, so — ", "Here's the thing: ", "Fair point. "],
         "neutral_m": ["Sure thing. ", "Happy to help. ", "Let me explain. "],
         "low_m": ["Understood. ", "I see. ", "Noted. "],
     },
@@ -405,7 +405,7 @@ class Tier1Reflex:
         if not adjusted.rstrip().endswith(("!", "?", ".", "...")):
             endings = adjustments.get("endings", "").split(",")
             if endings and endings[0].strip():
-                adjusted = adjusted
+                adjusted = adjusted.rstrip() + " " + endings[0].strip()
 
         # For aggressive tone in negative state, ensure clear boundaries
         if tone == "aggressive":

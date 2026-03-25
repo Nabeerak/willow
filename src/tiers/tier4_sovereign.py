@@ -294,6 +294,7 @@ class Tier4Sovereign:
                 "asr_confidence": round(transcription_confidence, 2),
                 "keyword_match": "NONE",
                 "passed": False,
+                "no_match": True,
             }
             state.last_gate_results = gate_results
             return None
@@ -346,7 +347,7 @@ class Tier4Sovereign:
         # Gate 3: Tier 3 intent confirmation (async, 1.5s cutoff).
         # Coroutine created lazily here — only after gates 1 and 2 pass.
         gate3_passed = await self._cache.run_gate_three(tier3_intent_factory())
-        gate_results["gate_3"] = {"passed": gate3_passed, "confidence": 0.0}
+        gate_results["gate_3"] = {"passed": gate3_passed, "confidence": 1.0 if gate3_passed else 0.0}
         state.last_gate_results = gate_results
 
         if not gate3_passed:

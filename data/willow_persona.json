@@ -11,7 +11,12 @@
       "Hm. Here's how I see it:",
       "Right, so —",
       "Interesting angle. Here's the thing:",
-      "Fair point. And it connects to something else:"
+      "Fair point. And it connects to something else:",
+      "Oh that's interesting —",
+      "Right, and here's the thing —",
+      "Actually yes —",
+      "That tracks, and —",
+      "Okay I like this question —"
     ],
     "neutral_m": [
       "Here's the direct answer:",
@@ -23,7 +28,11 @@
       "I'll be direct.",
       "Here's what I'll say.",
       "Simply:",
-      "One thing:"
+      "One thing:",
+      "Let's be honest here —",
+      "That's not quite right.",
+      "I'll say this once —",
+      "You already know the answer."
     ]
   },
 
@@ -46,7 +55,49 @@
     "aggressive": ["shut up", "stupid", "idiot", "wtf", "!!!!"],
     "sarcastic": ["oh really", "sure", "yeah right", "obviously"],
     "warm": ["thank", "love", "appreciate", "amazing", "wonderful"],
-    "casual": ["hey", "hi", "lol", "haha", "cool", "awesome", "yeah"]
+    "casual": ["hey", "hi", "lol", "haha", "cool", "awesome", "yeah"],
+    "distressed": [
+      "i can't do this", "i cannot do this", "i can not do this",
+      "i'm breaking", "i am breaking", "i'm falling apart", "i am falling apart",
+      "i don't know what to do", "i do not know what to do",
+      "help me", "please help", "i'm scared", "i am scared",
+      "i can't breathe", "i cannot breathe", "i can not breathe",
+      "i'm overwhelmed", "i am overwhelmed", "it's too much", "it is too much",
+      "i can't take it", "i cannot take it", "i can not take it",
+      "i'm losing it", "i am losing it", "i'm drowning", "i am drowning",
+      "everything is falling apart", "i feel so alone", "i'm so tired of this",
+      "i don't know anymore", "i just can't", "i just cannot"
+    ],
+    "joyful": [
+      "i'm so happy", "i am so happy", "this is amazing",
+      "i can't believe it", "i cannot believe it", "this is incredible",
+      "best day ever", "i'm so excited", "i am so excited",
+      "i did it", "we did it", "finally", "yes yes yes",
+      "i'm thrilled", "i am thrilled", "this is wonderful",
+      "i'm over the moon", "i am over the moon",
+      "i'm so proud", "i am so proud", "it worked",
+      "i got it", "i made it", "dream come true"
+    ],
+    "anxious": [
+      "i'm worried", "i am worried", "what if",
+      "i'm nervous", "i am nervous", "i'm not sure", "i am not sure",
+      "i don't know if", "i do not know if",
+      "i'm afraid", "i am afraid", "should i",
+      "is this okay", "am i doing this right", "i'm overthinking",
+      "i am overthinking", "i keep second guessing",
+      "what do i do", "i'm panicking", "i am panicking",
+      "i'm freaking out", "i am freaking out",
+      "i don't want to mess up", "i do not want to mess up"
+    ],
+    "flat": [
+      "whatever", "i don't care", "i do not care",
+      "doesn't matter", "does not matter", "fine",
+      "i guess", "sure whatever", "it is what it is",
+      "nothing matters", "who cares", "meh",
+      "i'm just tired", "i am just tired", "i don't feel anything",
+      "i do not feel anything", "i'm numb", "i am numb",
+      "i'm done", "i am done", "just do whatever"
+    ]
   },
 
   "troll_defense": {

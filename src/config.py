@@ -100,7 +100,7 @@ class GeminiConfig:
     """Gemini API configuration settings."""
     api_key: Optional[str] = None
     model_id: str = "gemini-2.5-flash-native-audio-preview-12-2025"
-    voice_name: str = "Aoede"
+    voice_name: str = "Leda"
 
     @classmethod
     def from_env(cls) -> "GeminiConfig":
@@ -113,7 +113,7 @@ class GeminiConfig:
         return cls(
             api_key=api_key,
             model_id=os.getenv("GEMINI_MODEL_ID", "gemini-2.5-flash-native-audio-preview-12-2025"),
-            voice_name=os.getenv("GEMINI_VOICE_NAME", "Aoede"),
+            voice_name=os.getenv("GEMINI_VOICE_NAME", "Leda"),
         )
 
     def validate(self) -> None:

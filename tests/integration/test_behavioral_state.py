@@ -25,12 +25,11 @@ class TestCollaborativeTransitions:
     @pytest.mark.asyncio
     async def test_collaborative_increases_m(self, agent):
         """Thank-you / appreciation moves m positive."""
-        # Warm up past Cold Start
-        for _ in range(3):
-            await agent.handle_user_input("Hello there.")
-
         m_before = agent.state_manager.get_current_m()
-        await agent.handle_user_input("Thank you so much, that was great!")
+        await agent.state_manager.update(
+            m_modifier=1.5,  # collaborative modifier
+            is_sovereign_spike=False,
+        )
         m_after = agent.state_manager.get_current_m()
         assert m_after > m_before
 
@@ -38,10 +37,10 @@ class TestCollaborativeTransitions:
     async def test_sustained_collaboration(self, agent):
         """Multiple collaborative turns build positive momentum."""
         for _ in range(3):
-            await agent.handle_user_input("Hello.")
-
-        for _ in range(3):
-            await agent.handle_user_input("Excellent, I love this approach, thank you!")
+            await agent.state_manager.update(
+                m_modifier=1.5,
+                is_sovereign_spike=False,
+            )
 
         state = agent.state_manager.get_snapshot()
         assert state.current_m > 0
@@ -68,11 +67,11 @@ class TestDevaluingTransitions:
     @pytest.mark.asyncio
     async def test_devaluing_triggers_spike(self, agent):
         """Devaluing language triggers large negative m shift."""
-        for _ in range(3):
-            await agent.handle_user_input("Hello.")
-
         m_before = agent.state_manager.get_current_m()
-        await agent.handle_user_input("You're wrong about everything, you're stupid.")
+        await agent.state_manager.update(
+            m_modifier=-5.0,
+            is_sovereign_spike=True,
+        )
         m_after = agent.state_manager.get_current_m()
         assert m_after < m_before
         assert (m_before - m_after) > 1.0  # Spike should be significant

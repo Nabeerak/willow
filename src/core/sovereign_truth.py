@@ -691,9 +691,24 @@ class SovereignTruthCache:
             intent, confidence = await asyncio.wait_for(
                 tier3_intent_coro, timeout=cutoff_seconds
             )
-            return intent in REQUIRED_INTENTS and confidence >= REQUIRED_CONFIDENCE
+            # devaluing intent is itself the adversarial signal — Gates 1 and 2
+            # already confirmed keyword presence; requiring tactic co-occurrence
+            # here meant pure identity challenges (no simultaneous manipulation
+            # tactic) could never fire T4 via the non-deferred path.
+            if intent == "devaluing":
+                passed = True
+            else:
+                passed = intent in REQUIRED_INTENTS and confidence >= REQUIRED_CONFIDENCE
+            _logger.debug(
+                "Gate 3 result: intent=%s confidence=%.3f passed=%s",
+                intent, confidence, passed,
+            )
+            return passed
         except asyncio.TimeoutError:
-            # Conservative default: hold Tier 4 (FR-022)
+            _logger.warning(
+                "Gate 3 timed out after %.1fs — T4 held (conservative default)",
+                cutoff_seconds,
+            )
             return False
 
     # ------------------------------------------------------------------

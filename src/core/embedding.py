@@ -25,7 +25,7 @@ logger = logging.getLogger(__name__)
 EMBEDDING_MODEL = "gemini-embedding-001"
 SIMILARITY_THRESHOLD = 0.45       # minimum cosine similarity for sovereign truths
 TACTIC_SIMILARITY_THRESHOLD = 0.55  # higher bar for tactics — fuzzier concept space
-EMBEDDING_TIMEOUT_SEC = 0.30      # 300ms timeout for semantic fallback
+EMBEDDING_TIMEOUT_SEC = 0.80      # 800ms timeout for semantic fallback
 
 # Disk cache path — persists embeddings across server restarts to avoid
 # re-calling gemini-embedding-001 every time Uvicorn boots.
